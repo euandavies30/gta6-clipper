@@ -1,0 +1,71 @@
+# Accounts, sources and caption templates. No secrets here: `env:` maps each
+# credential to the NAME of an environment variable that holds it.
+#
+# poster: tiktok | instagram | webhook | dryrun
+#   tiktok    -> TikTok Content Posting API (private-only until the app is audited)
+#   instagram -> Instagram Graph API (Reels)
+#   webhook   -> hand off to Make/Zapier/Buffer/Metricool (no API review needed)
+#
+# Keep posts_per_day at 3-6. Same-platform accounts never get the same clip.
+
+accounts:
+  - name: tt_main
+    platform: tiktok
+    poster: tiktok
+    posts_per_day: 4
+    active_hours: [9, 23]
+    timezone: Europe/London
+    min_gap_minutes: 120
+    hashtags: [gta6, gtavi, gta, rockstargames, vicecity, fyp]
+    env:
+      refresh_token: TIKTOK_MAIN_REFRESH_TOKEN
+
+  - name: tt_second
+    platform: tiktok
+    poster: tiktok
+    posts_per_day: 3
+    active_hours: [11, 23]
+    timezone: Europe/London
+    min_gap_minutes: 150
+    hashtags: [gta6, grandtheftauto, gaming, gtaonline, leonida]
+    env:
+      refresh_token: TIKTOK_SECOND_REFRESH_TOKEN
+
+  - name: ig_main
+    platform: instagram
+    poster: instagram
+    posts_per_day: 4
+    active_hours: [9, 23]
+    timezone: Europe/London
+    min_gap_minutes: 120
+    hashtags: [gta6, gtavi, gta, rockstargames, gamingreels]
+    env:
+      user_id: IG_MAIN_USER_ID
+      access_token: IG_MAIN_ACCESS_TOKEN
+
+  - name: ig_second
+    platform: instagram
+    poster: instagram
+    posts_per_day: 3
+    active_hours: [11, 23]
+    timezone: Europe/London
+    min_gap_minutes: 150
+    hashtags: [gta6, grandtheftauto, gamingclips, vicecity]
+    env:
+      user_id: IG_SECOND_USER_ID
+      access_token: IG_SECOND_ACCESS_TOKEN
+
+sources:
+  # Only channels you're allowed to repost from.
+  youtube_channels: ["@RockstarGames"]
+  title_keywords: ["GTA ?(6|VI)", "Grand Theft Auto ?VI"]
+  max_videos_per_ingest: 3
+  clips_per_video: 6
+  clip_min_seconds: 12
+  clip_max_seconds: 35
+
+caption_templates:
+  - "{title} 🌴🔥\n{credit}\nFollow for daily GTA 6 clips"
+  - "Did you catch this? 👀 {title}\n{credit}"
+  - "Vice City never looked this good 🌆\n{credit}\nWhich part hyped you most?"
+  - "GTA 6 is going to be insane 🤯\n{credit}\nDrop a 🔥 if you're ready"

@@ -1,0 +1,137 @@
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from unittest import mock
+
+import pytest
+
+from clipper import captions, scheduler
+from clipper.config import Account, Settings, load_app_config
+from clipper.db import DB
+from clipper.posters import get_poster
+from clipper.posters.tiktok import TikTokPoster
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture
+def db(tmp_path):
+    return DB(tmp_path / "t.db")
+
+
+@pytest.fixture
+def settings(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("DRY_RUN", "true")
+    s = Settings()
+    s.ensure_dirs()
+    return s
+
+
+def acc(name="tt_a", platform="tiktok", n=4):
+    return Account(name=name, platform=platform, poster="dryrun", posts_per_day=n,
+                   active_hours=(9, 23), timezone="Europe/London", min_gap_minutes=60)
+
+
+def add_clips(db, n, status="approved"):
+    sid = db.add_source("inbox", "x.mp4", title="t", local_path="/x.mp4")
+    return [db.add_clip(sid, 0, 20, 10 - i, f"/clips/c{i}.mp4", "", "cap", status) for i in range(n)]
+
+
+def test_shipped_config_loads():
+    app = load_app_config(ROOT / "config" / "accounts.yaml")
+    assert {a.platform for a in app.accounts} == {"tiktok", "instagram"}
+    assert all(3 <= a.posts_per_day <= 6 for a in app.accounts)
+
+
+def test_slots_inside_window_and_stable():
+    a = acc(n=5)
+    day = datetime(2026, 11, 18, tzinfo=timezone.utc)
+    slots = scheduler.daily_slots(a, day)
+    assert len(slots) == 5
+    assert all(9 <= s.hour < 23 for s in slots)
+    assert slots == scheduler.daily_slots(a, day)
+    assert slots == sorted(slots)
+
+
+def test_due_respects_slots_and_gap(db):
+    a = acc(n=4)
+    slots = scheduler.daily_slots(a, datetime(2026, 11, 18))
+    before = slots[0] - timedelta(minutes=1)
+    assert not scheduler.is_due(a, db, before.astimezone(timezone.utc))
+    after = slots[0] + timedelta(minutes=1)
+    assert scheduler.is_due(a, db, after.astimezone(timezone.utc))
+
+
+def test_tick_posts_once_per_slot_and_no_duplicates_on_platform(db, settings):
+    from clipper.config import AppConfig, SourceConfig
+    add_clips(db, 5)
+    a1, a2 = acc("tt_a"), acc("tt_b")
+    app = AppConfig(accounts=[a1, a2], sources=SourceConfig(), caption_templates=["x"])
+    late = datetime(2026, 11, 18, 23, 30, tzinfo=timezone.utc)
+    with mock.patch("clipper.db.now_iso", return_value=late.isoformat()):
+        ev = scheduler.tick(settings, app, db, late)
+        assert len(ev) == 2
+        # second tick in the same instant: min gap blocks
+        assert scheduler.tick(settings, app, db, late) == []
+    posted = [p["clip_id"] for p in db.recent_posts()]
+    assert len(posted) == len(set(posted)), "same clip went to two TikTok accounts"
+
+
+def test_clip_can_go_to_each_platform_once(db):
+    add_clips(db, 1)
+    db.record_post(1, "tt_a", "tiktok", "ok")
+    assert db.next_clip_for("tt_b", "tiktok") is None
+    assert db.next_clip_for("ig_a", "instagram")["id"] == 1
+
+
+def test_pending_clips_are_never_posted(db):
+    add_clips(db, 2, status="pending")
+    assert db.next_clip_for("tt_a", "tiktok") is None
+
+
+def test_captions_and_hashtags(tmp_path):
+    chunks = captions.chunk_words([{"start": 0, "end": .3, "word": "a"}, {"start": .4, "end": .6, "word": "b"},
+                                   {"start": .7, "end": .9, "word": "c"}, {"start": 1.0, "end": 1.2, "word": "d"}])
+    assert [c["text"] for c in chunks] == ["a b c", "d"]
+    ass = captions.build_ass(chunks, "hook {x}", 10, tmp_path / "s.ass").read_text()
+    assert "HOOK (X)" in ass and "A B C" in ass
+    cap = captions.post_caption("{title}\n{credit}", "Trailer", None)
+    assert cap == "Trailer"
+    assert captions.with_hashtags("hi", ["gta6", "#fyp"]) == "hi\n\n#gta6 #fyp"
+
+
+def test_dry_run_forces_dryrun_poster(settings):
+    a = acc()
+    a.poster = "tiktok"
+    assert get_poster(a, settings).name == "dryrun"
+
+
+def test_tiktok_direct_post_flow(settings, tmp_path, monkeypatch):
+    monkeypatch.setenv("TIKTOK_CLIENT_KEY", "k")
+    monkeypatch.setenv("TIKTOK_CLIENT_SECRET", "s")
+    monkeypatch.setenv("TT_RT", "refresh")
+    a = acc()
+    a.poster, a.env = "tiktok", {"refresh_token": "TT_RT"}
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"0" * 1000)
+
+    def fake_post(url, **kw):
+        r = mock.Mock(status_code=200)
+        if url.endswith("/oauth/token/"):
+            r.json.return_value = {"access_token": "AT", "refresh_token": "RT2", "expires_in": 86400}
+        elif "creator_info" in url:
+            r.json.return_value = {"data": {"privacy_level_options": ["SELF_ONLY"]}, "error": {"code": "ok"}}
+        elif "video/init" in url:
+            assert kw["json"]["post_info"]["privacy_level"] == "SELF_ONLY"
+            assert kw["json"]["source_info"]["video_size"] == 1000
+            r.json.return_value = {"data": {"publish_id": "P1", "upload_url": "https://up"}, "error": {"code": "ok"}}
+        elif "status/fetch" in url:
+            r.json.return_value = {"data": {"status": "PUBLISH_COMPLETE"}, "error": {"code": "ok"}}
+        return r
+
+    put = mock.Mock(return_value=mock.Mock(status_code=201))
+    with mock.patch("clipper.posters.tiktok.requests.post", side_effect=fake_post), \
+         mock.patch("clipper.posters.tiktok.requests.put", put):
+        res = TikTokPoster(a, settings).post(video, "caption")
+    assert res.remote_id == "P1"
+    assert put.call_args.kwargs["headers"]["Content-Range"] == "bytes 0-999/1000"

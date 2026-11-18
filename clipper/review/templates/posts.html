@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block body %}
+<header><h1>GTA 6 Clipper</h1><a href="/">Queue</a><a href="/posts" class="on">Posts</a></header>
+<main>
+  <table>
+    <tr><th>When (UTC)</th><th>Account</th><th>Platform</th><th>Clip</th><th>Status</th><th>Detail</th></tr>
+    {% for p in posts %}
+    <tr>
+      <td>{{ p.posted_at }}</td><td>{{ p.account }}</td><td>{{ p.platform }}</td><td>#{{ p.clip_id }}</td>
+      <td class="{{ 'failed' if p.status == 'failed' else 'ok' }}">{{ p.status }}</td>
+      <td class="meta">{{ p.error or p.remote_id or '' }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="meta">Nothing posted yet.</td></tr>
+    {% endfor %}
+  </table>
+</main>
+{% endblock %}

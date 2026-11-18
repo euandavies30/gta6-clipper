@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GTA 6 Clipper</title>
+<style>
+  :root { --bg:#0e0f13; --card:#181a21; --text:#eceef3; --muted:#9097a6; --accent:#ff4fa3; --ok:#3ecf8e; --bad:#ff5d5d; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui, sans-serif; }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:14px 16px; border-bottom:1px solid #262a33; }
+  header h1 { font-size:18px; margin:0 12px 0 0; }
+  header a { color:var(--muted); text-decoration:none; }
+  header a.on { color:var(--text); font-weight:600; }
+  .pill { font-size:12px; padding:2px 8px; border-radius:99px; background:#262a33; color:var(--muted); }
+  .pill.warn { background:#4a3a12; color:#ffd479; }
+  main { padding:16px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:16px; }
+  .card { background:var(--card); border-radius:12px; overflow:hidden; display:flex; flex-direction:column; }
+  video { width:100%; aspect-ratio:9/16; background:#000; display:block; }
+  .body { padding:10px 12px 12px; display:flex; flex-direction:column; gap:8px; }
+  .meta { color:var(--muted); font-size:13px; }
+  textarea { width:100%; min-height:80px; background:#0e0f13; color:var(--text); border:1px solid #2c303a; border-radius:8px; padding:8px; font:inherit; }
+  .row { display:flex; gap:8px; }
+  button { flex:1; border:0; border-radius:8px; padding:9px; font-weight:600; cursor:pointer; color:#fff; }
+  .approve { background:var(--ok); color:#06291a; } .reject { background:#2c303a; } .save { background:#2c303a; }
+  table { width:100%; border-collapse:collapse; } td, th { text-align:left; padding:8px; border-bottom:1px solid #262a33; font-size:14px; }
+  .failed { color:var(--bad); } .ok { color:var(--ok); }
+</style>
+</head>
+<body>
+{% block body %}{% endblock %}
+</body>
+</html>

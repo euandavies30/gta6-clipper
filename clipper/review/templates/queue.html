@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block body %}
+<header>
+  <h1>GTA 6 Clipper</h1>
+  {% for s in ["pending", "approved", "posted", "rejected"] %}
+    <a href="/?status={{ s }}" class="{{ 'on' if s == status }}">{{ s|capitalize }} ({{ counts[s] }})</a>
+  {% endfor %}
+  <a href="/posts">Posts</a>
+  {% if dry_run %}<span class="pill warn">DRY RUN: nothing is really posted</span>{% endif %}
+  {% if review_mode %}<span class="pill">Review mode on</span>{% else %}<span class="pill">Auto-approve</span>{% endif %}
+  <span class="pill">{{ accounts|length }} accounts</span>
+</header>
+<main>
+  {% if not clips %}<p class="meta">No {{ status }} clips.</p>{% endif %}
+  <div class="grid">
+  {% for c in clips %}
+    <div class="card">
+      <video src="/media/{{ c.path.split('/')[-1] }}" controls preload="metadata" playsinline></video>
+      <div class="body">
+        <div class="meta">#{{ c.id }} · {{ c.source_title }} · {{ '%.0f'|format(c.start_s) }}–{{ '%.0f'|format(c.end_s) }}s · score {{ '%.2f'|format(c.score or 0) }}</div>
+        <form method="post" action="/clips/{{ c.id }}/approve">
+          <input type="hidden" name="back" value="{{ status }}">
+          <textarea name="caption">{{ c.caption }}</textarea>
+          <div class="row" style="margin-top:8px">
+            {% if status != 'posted' %}
+            <button class="approve" type="submit">Approve</button>
+            <button class="save" type="submit" formaction="/clips/{{ c.id }}/caption">Save caption</button>
+            <button class="reject" type="submit" formaction="/clips/{{ c.id }}/reject">Reject</button>
+            {% endif %}
+          </div>
+        </form>
+      </div>
+    </div>
+  {% endfor %}
+  </div>
+</main>
+{% endblock %}
