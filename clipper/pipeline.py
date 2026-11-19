@@ -60,11 +60,24 @@ def download_new(settings: Settings, db: DB) -> None:
             db.update_source(src["id"], status="failed", error=str(e)[:1000])
 
 
-def cut_source(settings: Settings, app: AppConfig, db: DB, src, with_captions: bool = True) -> list[int]:
+MOMENT_CAPTION = "{title} 😭\n{credit}\nFollow for daily GTA 6 streamer clips"
+
+
+def cut_source(settings: Settings, app: AppConfig, db: DB, src, with_captions: bool = True,
+               whole: bool = False) -> list[int]:
+    """Cut a source into clips.
+
+    whole=True is for a streamer moment that was already trimmed to the wanted window: it becomes
+    exactly one clip, the title is the on-screen hook for the whole clip, and nothing is re-picked.
+    """
     cfg = app.sources
     lp = src["local_path"]
     path = lp if lp.startswith("http") else Path(lp)
-    segments = cutting.find_highlights(path, cfg.clips_per_video, cfg.clip_min_seconds, cfg.clip_max_seconds)
+    if whole:
+        dur = cutting.probe_duration(path)
+        segments = [cutting.Segment(0.0, round(dur, 2), 1.0)] if dur > 1 else []
+    else:
+        segments = cutting.find_highlights(path, cfg.clips_per_video, cfg.clip_min_seconds, cfg.clip_max_seconds)
     clip_ids = []
     for i, seg in enumerate(segments):
         out = settings.clips_dir / f"s{src['id']}_c{i}_{int(seg.start)}.mp4"
@@ -80,10 +93,14 @@ def cut_source(settings: Settings, app: AppConfig, db: DB, src, with_captions: b
                     chunks = captions.chunk_words(words)
                 except Exception as e:  # e.g. model download blocked: still ship the clip with its hook
                     log.warning("transcription failed, rendering without speech captions: %s", e)
-                ass = captions.build_ass(chunks, captions.pick_hook(src["title"]), seg.duration,
-                                         Path(tmp) / "subs.ass")
+                if whole:
+                    hook, hook_s = captions.clean_hook(src["title"] or ""), seg.duration
+                else:
+                    hook, hook_s = captions.pick_hook(src["title"]), 4.0
+                ass = captions.build_ass(chunks, hook or None, seg.duration, Path(tmp) / "subs.ass", hook_s)
             cutting.render_vertical(path, seg.start, seg.end, out, ass)
-        caption = captions.post_caption(random.choice(app.caption_templates), src["title"], src["credit"])
+        template = MOMENT_CAPTION if whole else random.choice(app.caption_templates)
+        caption = captions.post_caption(template, src["title"], src["credit"])
         status = "pending" if settings.review_mode else "approved"
         clip_ids.append(db.add_clip(src["id"], seg.start, seg.end, seg.score, out, transcript, caption, status))
         log.info("clip %s: %.1fs-%.1fs -> %s", clip_ids[-1], seg.start, seg.end, out.name)

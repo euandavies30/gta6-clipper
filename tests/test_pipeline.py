@@ -205,3 +205,48 @@ def test_tiktok_inbox_mode_uses_draft_endpoint(settings, tmp_path, monkeypatch):
         res = TikTokPoster(a, settings).post(video, "c")
     assert res.remote_id == "P2" and "inbox" in res.note
     assert not any("creator_info" in u for u in calls)
+
+
+def test_moment_start_times():
+    from clipper.sources import youtube as yt
+    assert yt.parse_time("1:02:03") == 3723 and yt.parse_time("62:03") == 3723
+    assert yt.parse_time("1h2m3s") == 3723 and yt.parse_time("2m") == 120 and yt.parse_time("90") == 90
+    assert yt.parse_time("") is None
+    assert yt.start_from_url("https://www.twitch.tv/videos/123?t=1h2m3s") == 3723
+    assert yt.start_from_url("https://youtu.be/abc?t=95") == 95
+    assert yt.start_from_url("https://www.twitch.tv/videos/123") is None
+    with pytest.raises(ValueError):
+        yt.parse_time("soon")
+    assert captions.clean_hook("Jynxzi crashes 😭  into a tower") == "Jynxzi crashes into a tower"
+
+
+def test_moment_link_downloads_only_the_window_and_makes_one_clip(settings, monkeypatch, tmp_path):
+    import subprocess, threading
+    from fastapi.testclient import TestClient
+    from clipper import pipeline
+    from clipper.review import app as review
+
+    vid = tmp_path / "moment.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=30:duration=4",
+                    "-f", "lavfi", "-i", "sine=duration=4", "-shortest", str(vid)], check=True)
+    seen = {}
+
+    def fake_download(url, out_dir, video_id, cookies=None, section=None):
+        seen["section"] = section
+        return vid
+    monkeypatch.setattr("clipper.sources.youtube.download", fake_download)
+    monkeypatch.setattr(review.threading, "Thread",
+                        lambda target, **kw: type("T", (), {"start": staticmethod(target)})())
+    monkeypatch.setattr(pipeline.captions, "transcribe", lambda *a, **k: [])
+    monkeypatch.setattr(pipeline, "free_raw", lambda *a, **k: None)
+    db = review.db
+    client = TestClient(review.app)
+    r = client.post("/add-url", data={"url": "https://www.twitch.tv/videos/42?t=1h0m10s",
+                                      "title": "Jynxzi forgets there's no autosave 😭", "credit": "Jynxzi"},
+                    auth=("admin", review.settings.review_password or ""), follow_redirects=False)
+    assert r.status_code == 303, r.text
+    assert seen["section"] == (3610.0, 3675.0)
+    with db.conn() as c:
+        clips = c.execute("SELECT * FROM clips").fetchall()
+    assert len(clips) == 1 and clips[0]["status"] == "pending"
+    assert "Follow for daily GTA 6 streamer clips" in clips[0]["caption"]

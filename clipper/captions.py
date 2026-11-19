@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import random
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -65,8 +66,13 @@ def _esc(text: str) -> str:
     return text.replace("\\", "").replace("{", "(").replace("}", ")").replace("\n", " ")
 
 
-def build_ass(chunks: list[dict], hook: str | None, duration: float, out: Path) -> Path:
-    """Captions sit in the lower third; an optional hook banner sits at the top for the first seconds."""
+def build_ass(chunks: list[dict], hook: str | None, duration: float, out: Path,
+              hook_seconds: float = 4.0) -> Path:
+    """Captions sit in the lower third; an optional hook banner sits at the top for the first seconds.
+
+    Streamer moments keep the hook up for the whole clip (hook_seconds >= duration), like the
+    top-performing TikTok edits do.
+    """
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -83,7 +89,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     lines = []
     if hook:
-        lines.append(f"Dialogue: 1,{_ts(0)},{_ts(min(duration, 4.0))},Hook,,0,0,0,,{_esc(hook.upper())}")
+        lines.append(f"Dialogue: 1,{_ts(0)},{_ts(min(duration, hook_seconds))},Hook,,0,0,0,,{_esc(hook.upper())}")
     for c in chunks:
         if c["start"] >= duration:
             continue
@@ -106,6 +112,12 @@ DEFAULT_HOOKS = [
 
 def pick_hook(title: str | None) -> str:
     return random.choice(DEFAULT_HOOKS)
+
+
+def clean_hook(text: str) -> str:
+    """Drop emoji and other symbols the caption font can't draw (they render as boxes)."""
+    text = "".join(ch for ch in text if ord(ch) < 0x2000 or 0x2010 <= ord(ch) <= 0x206F)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def post_caption(template: str, title: str | None, credit: str | None) -> str:
