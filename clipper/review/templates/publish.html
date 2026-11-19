@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block body %}
+<header><h1>GTA 6 Clipper</h1><a href="/">Queue</a><a href="/posts">Posts</a></header>
+<main style="max-width:900px">
+  <h2 style="margin-top:0">Post to TikTok</h2>
+  {% if error %}<p class="failed">Couldn't load your TikTok account: {{ error }}. Reconnect it on the Queue page.</p>{% endif %}
+  <div style="display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start">
+    <video src="/media/{{ clip.path.split('/')[-1] }}" controls playsinline style="width:260px;border-radius:12px"></video>
+    <form method="post" action="/clips/{{ clip.id }}/publish" id="f" style="flex:1;min-width:280px;display:flex;flex-direction:column;gap:14px">
+      <input type="hidden" name="account" value="{{ account.name }}">
+      <div class="row" style="align-items:center;gap:10px">
+        {% if creator.creator_avatar_url %}<img src="{{ creator.creator_avatar_url }}" alt="" style="width:40px;height:40px;border-radius:50%">{% endif %}
+        <div>Posting to <b>{{ creator.creator_nickname or account.name }}</b>
+          {% if creator.creator_username %}<span class="meta">@{{ creator.creator_username }}</span>{% endif %}</div>
+      </div>
+
+      <label>Caption
+        <textarea name="caption" maxlength="2200">{{ caption }}</textarea>
+      </label>
+
+      <label>Who can view this video
+        <select name="privacy" id="privacy" required style="width:100%;background:#0e0f13;color:var(--text);border:1px solid #2c303a;border-radius:8px;padding:8px;margin-top:4px">
+          <option value="" selected disabled>Choose…</option>
+          {% for o in privacy_options %}<option value="{{ o }}">{{ labels.get(o, o) }}</option>{% endfor %}
+        </select>
+      </label>
+
+      <fieldset style="border:1px solid #2c303a;border-radius:8px">
+        <legend>Allow users to</legend>
+        <label><input type="checkbox" name="allow_comment" value="true" {{ 'disabled' if creator.comment_disabled }}> Comment</label>&nbsp;&nbsp;
+        <label><input type="checkbox" name="allow_duet" value="true" {{ 'disabled' if creator.duet_disabled }}> Duet</label>&nbsp;&nbsp;
+        <label><input type="checkbox" name="allow_stitch" value="true" {{ 'disabled' if creator.stitch_disabled }}> Stitch</label>
+      </fieldset>
+
+      <fieldset style="border:1px solid #2c303a;border-radius:8px">
+        <legend><label><input type="checkbox" name="disclose" value="true" id="disclose"> Disclose video content</label></legend>
+        <p class="meta" style="margin:4px 0">Turn on to disclose that this video promotes goods or services in exchange for something of value.</p>
+        <div id="brand" style="display:none">
+          <label><input type="checkbox" name="brand_organic" value="true" id="bo"> Your brand</label>
+          <p class="meta" style="margin:2px 0 8px 22px">You are promoting yourself or your own business. Labelled "Promotional content".</p>
+          <label><input type="checkbox" name="brand_content" value="true" id="bc"> Branded content</label>
+          <p class="meta" style="margin:2px 0 0 22px">You are promoting another brand or a third party. Labelled "Paid partnership".</p>
+          <p class="meta" id="needpick" style="color:#ffd479">Pick at least one option above.</p>
+        </div>
+      </fieldset>
+
+      {% if too_long %}<p class="failed">This clip is {{ '%.0f'|format(duration) }}s, longer than this account's limit of {{ max_dur }}s.</p>{% endif %}
+
+      <p class="meta" id="consent">By posting, you agree to TikTok's <a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" style="color:var(--text)">Music Usage Confirmation</a>.</p>
+      <button class="approve" type="submit" id="go" disabled {{ 'hidden' if too_long }}>Post</button>
+      <p class="meta">After posting, TikTok may take a few minutes to process the video before it appears on the profile.</p>
+    </form>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+function update() {
+  const disclose = $('disclose').checked, bo = $('bo').checked, bc = $('bc').checked;
+  $('brand').style.display = disclose ? 'block' : 'none';
+  $('needpick').style.display = disclose && !bo && !bc ? 'block' : 'none';
+  // Branded content can't be private.
+  const priv = [...$('privacy').options].find(o => o.value === 'SELF_ONLY');
+  if (priv) { priv.disabled = disclose && bc; if (priv.disabled && $('privacy').value === 'SELF_ONLY') $('privacy').value = ''; }
+  const music = '<a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" style="color:var(--text)">Music Usage Confirmation</a>';
+  const bcp = '<a href="https://www.tiktok.com/legal/page/global/bc-policy/en" target="_blank" style="color:var(--text)">Branded Content Policy</a>';
+  $('consent').innerHTML = 'By posting, you agree to TikTok\'s ' + (disclose && bc ? bcp + ' and ' : '') + music + '.';
+  let label = '';
+  if (disclose && bc) label = 'Your video will be labelled "Paid partnership".';
+  else if (disclose && bo) label = 'Your video will be labelled "Promotional content".';
+  $('consent').innerHTML += label ? ' ' + label : '';
+  $('go').disabled = !$('privacy').value || (disclose && !bo && !bc);
+}
+['privacy','disclose','bo','bc'].forEach(id => $(id).addEventListener('change', update));
+$('f').addEventListener('submit', () => { $('go').disabled = true; $('go').textContent = 'Posting…'; });
+update();
+</script>
+{% endblock %}

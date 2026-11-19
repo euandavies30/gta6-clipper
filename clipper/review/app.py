@@ -145,6 +145,77 @@ def post_now(clip_id: int, account: str = Form(...), caption: str | None = Form(
         f"Posting clip #{clip_id} to {acc.name}. Refresh in a minute to see the result."), status_code=303)
 
 
+PRIVACY_LABELS = {"PUBLIC_TO_EVERYONE": "Everyone", "MUTUAL_FOLLOW_FRIENDS": "Friends",
+                  "FOLLOWER_OF_CREATOR": "Followers", "SELF_ONLY": "Only me"}
+
+
+def _account(name: str):
+    acc = next((a for a in load_app_config(settings.accounts_file).accounts if a.name == name), None)
+    if not acc:
+        raise HTTPException(404, "unknown account")
+    return acc
+
+
+from ..captions import with_hashtags  # noqa: E402
+
+
+@app.get("/clips/{clip_id}/publish", response_class=HTMLResponse)
+def publish_form(request: Request, clip_id: int, account: str, _=Depends(auth)):
+    """TikTok's required pre-post screen: creator, privacy (no default), interactions, disclosure, consent."""
+    clip, acc = db.get_clip(clip_id), _account(account)
+    if not clip:
+        raise HTTPException(404)
+    creator, error = {}, None
+    if acc.platform == "tiktok" and not settings.dry_run:
+        from ..posters.tiktok import TikTokPoster
+        try:
+            creator = TikTokPoster(acc, settings).creator_info()
+        except Exception as e:
+            error = str(e)
+    duration = clip["end_s"] - clip["start_s"]
+    max_dur = creator.get("max_video_post_duration_sec")
+    return templates.TemplateResponse(request, "publish.html", {
+        "clip": clip, "account": acc, "creator": creator, "error": error, "labels": PRIVACY_LABELS,
+        "privacy_options": creator.get("privacy_level_options") or ["SELF_ONLY"],
+        "too_long": bool(max_dur and duration > max_dur), "duration": duration, "max_dur": max_dur,
+        "caption": with_hashtags(clip["caption"] or "", acc.hashtags),
+    })
+
+
+@app.post("/clips/{clip_id}/publish")
+def publish(clip_id: int, account: str = Form(...), caption: str = Form(""), privacy: str = Form(...),
+            allow_comment: bool = Form(False), allow_duet: bool = Form(False), allow_stitch: bool = Form(False),
+            disclose: bool = Form(False), brand_organic: bool = Form(False), brand_content: bool = Form(False),
+            _=Depends(auth)):
+    clip, acc = db.get_clip(clip_id), _account(account)
+    if not clip:
+        raise HTTPException(404)
+    if privacy not in PRIVACY_LABELS:
+        raise HTTPException(400, "choose who can view this video")
+    if disclose and not (brand_organic or brand_content):
+        raise HTTPException(400, "pick Your brand and/or Branded content, or turn disclosure off")
+    db.update_clip(clip_id, caption=caption)
+    opts = dict(privacy=privacy, allow_comment=allow_comment, allow_duet=allow_duet, allow_stitch=allow_stitch,
+                brand_organic=disclose and brand_organic, brand_content=disclose and brand_content)
+
+    def _run():
+        from ..posters import get_poster
+        poster = get_poster(acc, settings)
+        try:
+            res = poster.post(Path(clip["path"]), caption, **opts)
+            db.record_post(clip_id, acc.name, acc.platform, "dry_run" if poster.name == "dryrun" else "ok",
+                           res.remote_id or res.note)
+            db.update_clip(clip_id, status="posted")
+        except Exception as e:
+            log.exception("publish failed")
+            db.record_post(clip_id, acc.name, acc.platform, "failed", error=str(e)[:1000])
+
+    threading.Thread(target=_run, daemon=True, name=f"publish-{clip_id}").start()
+    return RedirectResponse("/posts?msg=" + urllib.parse.quote(
+        f"Sent clip #{clip_id} to {acc.name}. TikTok can take a few minutes to process it before it shows "
+        "on the profile."), status_code=303)
+
+
 @app.post("/clips/{clip_id}/{action}")
 def act(clip_id: int, action: str, caption: str | None = Form(None), back: str = Form("pending"), _=Depends(auth)):
     if not db.get_clip(clip_id):

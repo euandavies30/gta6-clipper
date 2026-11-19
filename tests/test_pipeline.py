@@ -157,3 +157,18 @@ def test_direct_video_links_are_streamed_not_downloaded(db, settings):
         pipeline.download_new(settings, db)
     dl.assert_not_called()
     assert db.get_source(sid)["local_path"] == url
+
+
+def test_publish_page_and_options(settings, db, monkeypatch, tmp_path):
+    monkeypatch.setenv("REVIEW_PASSWORD", "pw")
+    from fastapi.testclient import TestClient
+    from clipper.review import app as review
+    monkeypatch.setattr(review, "db", db)
+    add_clips(db, 1)
+    c = TestClient(review.app)
+    r = c.get("/clips/1/publish?account=tt_main", auth=("admin", "pw"))
+    assert r.status_code == 200 and "Who can view this video" in r.text and "Music Usage Confirmation" in r.text
+    assert '<option value="" selected disabled>' in r.text
+    r = c.post("/clips/1/publish", auth=("admin", "pw"), follow_redirects=False,
+               data={"account": "tt_main", "caption": "hi", "privacy": "SELF_ONLY", "allow_comment": "true"})
+    assert r.status_code == 303

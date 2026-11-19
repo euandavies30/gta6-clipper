@@ -20,7 +20,7 @@ from .base import Poster, PostError, PostResult
 class WebhookPoster(Poster):
     name = "webhook"
 
-    def post(self, video: Path, caption: str) -> PostResult:
+    def post(self, video: Path, caption: str, **options) -> PostResult:
         url = self.account.secret("url")
         if not url:
             raise PostError(f"{self.account.name}: no webhook url configured")

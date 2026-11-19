@@ -90,12 +90,20 @@ class TikTokPoster(Poster):
         return data.get("data", {})
 
     # posting -----------------------------------------------------------------
-    def post(self, video: Path, caption: str) -> PostResult:
+    def creator_info(self) -> dict:
+        """Creator nickname/avatar, allowed privacy levels and interaction settings (shown before posting)."""
+        return self._api("/post/publish/creator_info/query/", self._access_token(), {})
+
+    def post(self, video: Path, caption: str, privacy: str | None = None, allow_comment: bool = True,
+             allow_duet: bool = True, allow_stitch: bool = True, brand_organic: bool = False,
+             brand_content: bool = False, **_) -> PostResult:
         token = self._access_token()
         creator = self._api("/post/publish/creator_info/query/", token, {})
         options = creator.get("privacy_level_options") or ["SELF_ONLY"]
-        wanted = os.getenv("TIKTOK_PRIVACY", "SELF_ONLY")
+        wanted = privacy or os.getenv("TIKTOK_PRIVACY", "SELF_ONLY")
         privacy = wanted if wanted in options else ("SELF_ONLY" if "SELF_ONLY" in options else options[0])
+        if brand_content and privacy == "SELF_ONLY":
+            raise PostError("Branded content can't be posted privately (TikTok rule)")
 
         size = video.stat().st_size
         if size <= 64 * MB:
@@ -108,9 +116,11 @@ class TikTokPoster(Poster):
             "post_info": {
                 "title": caption[:2200],
                 "privacy_level": privacy,
-                "disable_duet": False,
-                "disable_comment": False,
-                "disable_stitch": False,
+                "disable_duet": not allow_duet or bool(creator.get("duet_disabled")),
+                "disable_comment": not allow_comment or bool(creator.get("comment_disabled")),
+                "disable_stitch": not allow_stitch or bool(creator.get("stitch_disabled")),
+                "brand_organic_toggle": bool(brand_organic),
+                "brand_content_toggle": bool(brand_content),
                 "video_cover_timestamp_ms": 1000,
             },
             "source_info": {"source": "FILE_UPLOAD", "video_size": size,

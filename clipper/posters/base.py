@@ -29,7 +29,7 @@ class Poster:
         self.account = account
         self.settings = settings
 
-    def post(self, video: Path, caption: str) -> PostResult:  # pragma: no cover - interface
+    def post(self, video: Path, caption: str, **options) -> PostResult:  # pragma: no cover - interface
         raise NotImplementedError
 
     def public_url(self, video: Path) -> str:
@@ -63,6 +63,6 @@ class TokenStore:
 class DryRunPoster(Poster):
     name = "dryrun"
 
-    def post(self, video: Path, caption: str) -> PostResult:
+    def post(self, video: Path, caption: str, **options) -> PostResult:
         log.info("[dry run] %s (%s) would post %s\n%s", self.account.name, self.account.platform, video.name, caption)
         return PostResult(remote_id=None, note="dry run")

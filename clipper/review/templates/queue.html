@@ -58,7 +58,7 @@
             <select name="account" style="flex:1;background:#0e0f13;color:var(--text);border:1px solid #2c303a;border-radius:8px;padding:8px">
               {% for a in accounts if a.enabled %}<option value="{{ a.name }}">{{ a.name }}{% if connections[a.name] %} ({{ connections[a.name] }}){% endif %}</option>{% endfor %}
             </select>
-            <button class="save" type="submit" formaction="/clips/{{ c.id }}/post" style="flex:0 0 auto;padding:9px 14px">Post now</button>
+            <button class="save" type="submit" formmethod="get" formaction="/clips/{{ c.id }}/publish" style="flex:0 0 auto;padding:9px 14px">Post now</button>
           </div>
         </form>
       </div>

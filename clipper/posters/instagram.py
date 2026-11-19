@@ -63,7 +63,7 @@ class InstagramPoster(Poster):
             raise PostError(f"Instagram API error ({r.status_code}): {data.get('error', data)}")
         return data
 
-    def post(self, video: Path, caption: str) -> PostResult:
+    def post(self, video: Path, caption: str, **options) -> PostResult:
         token, uid = self._token(), self._user_id()
         mode = os.getenv("IG_UPLOAD_MODE") or ("url" if self.settings.public_base_url else "resumable")
         params = {"media_type": "REELS", "caption": caption[:2200], "share_to_feed": "true",
