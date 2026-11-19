@@ -58,8 +58,10 @@ accounts:
       access_token: IG_SECOND_ACCESS_TOKEN
 
 sources:
-  # Only channels you're allowed to repost from.
-  youtube_channels: ["@RockstarGames"]
+  # Rockstar's official media downloads (rockstargames.com/VI/media/videos).
+  rockstar_media: true
+  # YouTube blocks downloads from cloud servers, so this is off by default.
+  youtube_channels: []
   title_keywords: ["GTA ?(6|VI)", "Grand Theft Auto ?VI"]
   max_videos_per_ingest: 3
   clips_per_video: 6

@@ -83,6 +83,7 @@ class Account:
 
 @dataclass
 class SourceConfig:
+    rockstar_media: bool = True  # official downloads from rockstargames.com/VI/media/videos
     youtube_channels: list[str] = field(default_factory=list)  # handles like "@RockstarGames"
     title_keywords: list[str] = field(default_factory=list)
     max_videos_per_ingest: int = 5

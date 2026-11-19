@@ -259,6 +259,7 @@ def upload(file: UploadFile = File(...), title: str = Form(""), credit: str = Fo
             app_cfg = load_app_config(settings.accounts_file)
             pipeline.cut_source(settings, app_cfg, db, db.get_source(src_id))
             db.update_source(src_id, status="cut")
+            pipeline.free_raw(settings, db.get_source(src_id))
         except Exception as e:
             log.exception("clipping upload %s failed", dest.name)
             db.update_source(src_id, status="failed", error=str(e)[:1000])
@@ -283,13 +284,17 @@ def add_url(url: str = Form(...), title: str = Form(""), credit: str = Form(""),
             src_id = db.add_source("link", key, title=title.strip() or None, url=url, credit=credit.strip() or None)
             if not src_id:
                 return
-            path = yt.download(url, settings.raw_dir, f"link{src_id}", yt.cookie_file(settings.data_dir))
-            db.update_source(src_id, local_path=str(path), status="downloaded")
+            if pipeline.is_direct_video(url):
+                path = url  # streamed by ffmpeg, never stored
+            else:
+                path = str(yt.download(url, settings.raw_dir, f"link{src_id}", yt.cookie_file(settings.data_dir)))
+            db.update_source(src_id, local_path=path, status="downloaded")
             src = db.get_source(src_id)
             if not src["title"]:
-                db.update_source(src_id, title=Path(path).stem)
+                db.update_source(src_id, title=Path(path.split("?")[0]).stem)
             pipeline.cut_source(settings, load_app_config(settings.accounts_file), db, db.get_source(src_id))
             db.update_source(src_id, status="cut")
+            pipeline.free_raw(settings, db.get_source(src_id))
         except Exception as e:
             log.error("clip from link failed: %s: %s", url, str(e).splitlines()[0][:300])
             if src_id:

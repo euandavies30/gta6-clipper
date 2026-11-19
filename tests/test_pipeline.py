@@ -135,3 +135,25 @@ def test_tiktok_direct_post_flow(settings, tmp_path, monkeypatch):
         res = TikTokPoster(a, settings).post(video, "caption")
     assert res.remote_id == "P1"
     assert put.call_args.kwargs["headers"]["Content-Range"] == "bytes 0-999/1000"
+
+
+def test_rockstar_media_parsing(db):
+    from clipper.sources import rockstar
+    html = ('x "https://media-rockstargames-com.akamaized.net/VI/downloads/videos/GTAVI_Launch_Trailer/GTAVI_Launch_Trailer.mp4" '
+            '"https://media-rockstargames-com.akamaized.net/VI/downloads/videos/GTAVI_Launch_Trailer/GTAVI_Launch_Trailer.mp4" '
+            '"https://media-rockstargames-com.akamaized.net/VI/downloads/videos/GTAVI_Official_Cover_Art_Landscape/GTAVI_Official_Cover_Art_Landscape.mp4"')
+    vids = rockstar.list_videos(html)
+    assert [v["title"] for v in vids] == ["GTA 6 Launch Trailer", "GTA 6 Official Cover Art Landscape"]
+    with mock.patch.object(rockstar, "list_videos", return_value=vids):
+        assert rockstar.discover(db, 5) == 1
+
+
+def test_direct_video_links_are_streamed_not_downloaded(db, settings):
+    from clipper import pipeline
+    url = "https://media-rockstargames-com.akamaized.net/VI/downloads/videos/GTAVI_Launch_Trailer/GTAVI_Launch_Trailer.mp4"
+    assert pipeline.is_direct_video(url) and not pipeline.is_direct_video("https://youtu.be/abc")
+    sid = db.add_source("rockstar", "GTAVI_Launch_Trailer", title="t", url=url)
+    with mock.patch("clipper.sources.youtube.download") as dl:
+        pipeline.download_new(settings, db)
+    dl.assert_not_called()
+    assert db.get_source(sid)["local_path"] == url

@@ -9,13 +9,15 @@ from pathlib import Path
 from . import captions, cutting
 from .config import AppConfig, Settings
 from .db import DB
-from .sources import inbox, youtube
+from .sources import inbox, rockstar, youtube
 
 log = logging.getLogger(__name__)
 
 
 def discover(settings: Settings, app: AppConfig, db: DB) -> int:
     added = inbox.scan(db, settings.inbox_dir, settings.raw_dir)
+    if app.sources.rockstar_media:
+        added += rockstar.discover(db, app.sources.max_videos_per_ingest)
     if app.sources.youtube_channels:
         if not settings.youtube_api_key:
             log.warning("YOUTUBE_API_KEY not set; skipping YouTube discovery")
@@ -25,13 +27,33 @@ def discover(settings: Settings, app: AppConfig, db: DB) -> int:
     return added
 
 
+def is_direct_video(url: str | None) -> bool:
+    return bool(url) and url.split("?", 1)[0].lower().endswith((".mp4", ".mov", ".m4v", ".webm"))
+
+
+def free_raw(settings: Settings, src) -> None:
+    """Delete a downloaded source file once it has been clipped (volumes are small)."""
+    lp = src["local_path"] or ""
+    if lp and not lp.startswith("http"):
+        try:
+            p = Path(lp).resolve()
+            if p.parent == settings.raw_dir.resolve():
+                p.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def download_new(settings: Settings, db: DB) -> None:
     cookies = youtube.cookie_file(settings.data_dir)
     # Failed YouTube downloads are retried each ingest (e.g. after cookies are added).
-    retry = [s for s in db.sources_with_status("failed") if s["kind"] == "youtube" and not s["local_path"]]
+    retry = [s for s in db.sources_with_status("failed") if s["kind"] in ("youtube", "rockstar") and not s["local_path"]]
     for src in list(db.sources_with_status("new")) + retry:
         try:
-            path = youtube.download(src["url"], settings.raw_dir, src["external_id"], cookies)
+            if is_direct_video(src["url"]):
+                # ffmpeg reads direct MP4 links over HTTP, so big 4K trailers never touch the disk.
+                db.update_source(src["id"], local_path=src["url"], status="downloaded")
+                continue
+            path = youtube.download(src["url"], settings.raw_dir, f"{src['kind']}_{src['id']}", cookies)
             db.update_source(src["id"], local_path=str(path), status="downloaded")
         except Exception as e:
             log.error("download failed: %s: %s", src["url"], str(e).splitlines()[0][:300])
@@ -40,7 +62,8 @@ def download_new(settings: Settings, db: DB) -> None:
 
 def cut_source(settings: Settings, app: AppConfig, db: DB, src, with_captions: bool = True) -> list[int]:
     cfg = app.sources
-    path = Path(src["local_path"])
+    lp = src["local_path"]
+    path = lp if lp.startswith("http") else Path(lp)
     segments = cutting.find_highlights(path, cfg.clips_per_video, cfg.clip_min_seconds, cfg.clip_max_seconds)
     clip_ids = []
     for i, seg in enumerate(segments):
@@ -73,6 +96,7 @@ def cut_downloaded(settings: Settings, app: AppConfig, db: DB, with_captions: bo
         try:
             total += len(cut_source(settings, app, db, src, with_captions))
             db.update_source(src["id"], status="cut")
+            free_raw(settings, src)
         except Exception as e:
             log.exception("cutting failed for source %s", src["id"])
             db.update_source(src["id"], status="failed", error=str(e)[:1000])
