@@ -268,6 +268,46 @@ def upload(file: UploadFile = File(...), title: str = Form(""), credit: str = Fo
     return RedirectResponse("/?status=pending&uploaded=1", status_code=303)
 
 
+@app.post("/add-url")
+def add_url(url: str = Form(...), title: str = Form(""), credit: str = Form(""), _=Depends(auth)):
+    """Clip a video from a link (YouTube, Twitch clip/VOD, or a direct .mp4) in the background."""
+    url = url.strip()
+    if not re.match(r"https?://", url):
+        raise HTTPException(400, "Paste a full http(s) link")
+    from ..sources import youtube as yt
+
+    def _run():
+        src_id = None
+        try:
+            key = re.sub(r"[^A-Za-z0-9]+", "_", url)[-80:]
+            src_id = db.add_source("link", key, title=title.strip() or None, url=url, credit=credit.strip() or None)
+            if not src_id:
+                return
+            path = yt.download(url, settings.raw_dir, f"link{src_id}", yt.cookie_file(settings.data_dir))
+            db.update_source(src_id, local_path=str(path), status="downloaded")
+            src = db.get_source(src_id)
+            if not src["title"]:
+                db.update_source(src_id, title=Path(path).stem)
+            pipeline.cut_source(settings, load_app_config(settings.accounts_file), db, db.get_source(src_id))
+            db.update_source(src_id, status="cut")
+        except Exception as e:
+            log.error("clip from link failed: %s: %s", url, str(e).splitlines()[0][:300])
+            if src_id:
+                db.update_source(src_id, status="failed", error=str(e)[:1000])
+
+    threading.Thread(target=_run, daemon=True, name="add-url").start()
+    return RedirectResponse("/?status=pending&msg=" + urllib.parse.quote(
+        "Downloading and clipping that link. Clips appear here in a few minutes; refresh to check."), status_code=303)
+
+
+@app.get("/sources", response_class=PlainTextResponse)
+def sources(_=Depends(auth)):
+    """Plain-text list of sources and their status (handy for debugging failed downloads)."""
+    with db.conn() as c:
+        rows = c.execute("SELECT id, kind, status, title, url, substr(error,1,200) e FROM sources ORDER BY id DESC LIMIT 50").fetchall()
+    return "\n".join(f"#{r['id']} [{r['kind']}/{r['status']}] {r['title']} {r['url'] or ''} {r['e'] or ''}" for r in rows)
+
+
 # Domain verification (must stay the last route: it matches any top-level path) --------
 @app.get("/{name}", response_class=PlainTextResponse)
 def site_verification(name: str):
