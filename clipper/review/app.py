@@ -79,9 +79,14 @@ def site_verification(name: str):
 
     Set TIKTOK_VERIFY_FILENAME (e.g. tiktokAbC123.txt) and TIKTOK_VERIFY_CONTENT to the file's text.
     """
-    if f"{name}.txt" != os.getenv("TIKTOK_VERIFY_FILENAME") or not os.getenv("TIKTOK_VERIFY_CONTENT"):
+    wanted = (os.getenv("TIKTOK_VERIFY_FILENAME") or "").strip().strip('"').rsplit("/", 1)[-1]
+    content = (os.getenv("TIKTOK_VERIFY_CONTENT") or "").strip().strip('"')
+    if wanted.lower().endswith(".txt"):
+        wanted = wanted[:-4]
+    if not wanted or not content or name.strip().lower() != wanted.lower():
+        log.warning("verification file %s.txt requested; configured name is %r", name, wanted or None)
         raise HTTPException(404)
-    return os.environ["TIKTOK_VERIFY_CONTENT"]
+    return content
 
 
 @app.get("/privacy", response_class=HTMLResponse)
