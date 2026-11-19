@@ -218,17 +218,14 @@ def upload(file: UploadFile = File(...), title: str = Form(""), credit: str = Fo
 def site_verification(name: str):
     """Serves the URL-verification file TikTok's developer portal asks for.
 
-    Set TIKTOK_VERIFY_FILENAME (e.g. tiktokAbC123.txt) and TIKTOK_VERIFY_CONTENT to the file's text.
-    Works with or without the .txt on the end of the URL.
+    Set TIKTOK_VERIFY_CONTENT to the text inside the file TikTok gives you.
     """
-    def base(n: str) -> str:
-        n = n.strip().strip('"').rsplit("/", 1)[-1]
-        return n[:-4] if n.lower().endswith(".txt") else n
-
-    wanted = base(os.getenv("TIKTOK_VERIFY_FILENAME") or "")
+    # Any top-level path starting with "tiktok" gets the signature, so the file name
+    # variable is optional and a typo in it can't break verification.
     content = (os.getenv("TIKTOK_VERIFY_CONTENT") or "").strip().strip('"')
-    if not wanted or not content or base(name).lower() != wanted.lower():
-        if name.lower().startswith("tiktok"):
-            log.warning("verification file %s requested; configured name is %r", name, wanted or None)
+    if not name.lower().startswith("tiktok"):
         raise HTTPException(404)
+    if not content:
+        log.warning("verification file %s requested but TIKTOK_VERIFY_CONTENT is empty", name)
+        raise HTTPException(404, "TIKTOK_VERIFY_CONTENT is not set")
     return content
