@@ -48,6 +48,10 @@ async def collapse_slashes(request: Request, call_next):
     path = request.scope["path"]
     if "//" in path:
         request.scope["path"] = re.sub(r"/{2,}", "/", path)
+    # A URL prefix saved with a stray space makes TikTok fetch "/%20/tiktok....txt": serve the last segment.
+    last = request.scope["path"].rstrip("/").rsplit("/", 1)[-1]
+    if last.lower().startswith("tiktok") and request.scope["path"] != f"/{last}":
+        request.scope["path"] = f"/{last}"
     if request.scope["path"].lower().startswith("/tiktok"):
         log.info("verification check: %s from %s", path, request.headers.get("user-agent", "?")[:80])
     return await call_next(request)
