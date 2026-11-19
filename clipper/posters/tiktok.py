@@ -41,6 +41,16 @@ def exchange_code(code: str, redirect_uri: str) -> dict:
     return data
 
 
+def display_name(access_token: str) -> str | None:
+    """The connected account's display name (user.info.basic), shown in the review app."""
+    try:
+        r = requests.get(f"{API}/user/info/", params={"fields": "open_id,display_name"}, timeout=30,
+                         headers={"Authorization": f"Bearer {access_token}"})
+        return r.json().get("data", {}).get("user", {}).get("display_name")
+    except Exception:
+        return None
+
+
 class TikTokPoster(Poster):
     name = "tiktok"
 
@@ -65,6 +75,8 @@ class TikTokPoster(Poster):
         data = r.json()
         if "access_token" not in data:
             raise PostError(f"TikTok token refresh failed: {data}")
+        if tok.get("display_name"):
+            data["display_name"] = tok["display_name"]
         self.tokens.save(data)
         return data["access_token"]
 

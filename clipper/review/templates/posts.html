@@ -2,6 +2,8 @@
 {% block body %}
 <header><h1>GTA 6 Clipper</h1><a href="/">Queue</a><a href="/posts" class="on">Posts</a></header>
 <main>
+  {% if dry_run %}<p class="pill warn" style="display:inline-block">DRY RUN is on: posts are only logged. Set DRY_RUN=false in Railway to really post.</p>{% endif %}
+  {% if flash %}<p class="pill" style="display:inline-block;background:#123d2b;color:#7ef0b8">{{ flash }}</p>{% endif %}
   <table>
     <tr><th>When (UTC)</th><th>Account</th><th>Platform</th><th>Clip</th><th>Status</th><th>Detail</th></tr>
     {% for p in posts %}

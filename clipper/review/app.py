@@ -104,10 +104,45 @@ def legal(request: Request):
 def queue(request: Request, status: str = "pending", _=Depends(auth)):
     app_cfg = load_app_config(settings.accounts_file)
     counts = {s: len(db.clips(s, limit=10000)) for s in ("pending", "approved", "posted", "rejected")}
+    connections = {}
+    for a in app_cfg.accounts:
+        tok = TokenStore(settings, a).load()
+        connections[a.name] = tok.get("display_name") or ("connected" if tok.get("refresh_token") or tok.get("access_token") else None)
     return templates.TemplateResponse(request, "queue.html", {
         "clips": db.clips(status), "status": status, "counts": counts,
         "review_mode": settings.review_mode, "dry_run": settings.dry_run, "accounts": app_cfg.accounts,
+        "connections": connections, "flash": request.query_params.get("msg"),
     })
+
+
+@app.post("/clips/{clip_id}/post")
+def post_now(clip_id: int, account: str = Form(...), caption: str | None = Form(None), _=Depends(auth)):
+    """Post one clip to one account right now (used for testing and the TikTok review demo)."""
+    clip = db.get_clip(clip_id)
+    acc = next((a for a in load_app_config(settings.accounts_file).accounts if a.name == account), None)
+    if not clip or not acc:
+        raise HTTPException(404)
+    if caption is not None:
+        db.update_clip(clip_id, caption=caption)
+    db.update_clip(clip_id, status="approved") if clip["status"] == "pending" else None
+
+    def _run():
+        from ..captions import with_hashtags
+        from ..posters import get_poster
+        poster = get_poster(acc, settings)
+        text = with_hashtags((caption if caption is not None else clip["caption"]) or "", acc.hashtags)
+        try:
+            res = poster.post(Path(clip["path"]), text)
+            db.record_post(clip_id, acc.name, acc.platform, "dry_run" if poster.name == "dryrun" else "ok",
+                           res.remote_id or res.note)
+            db.update_clip(clip_id, status="posted")
+        except Exception as e:
+            log.exception("post now failed")
+            db.record_post(clip_id, acc.name, acc.platform, "failed", error=str(e)[:1000])
+
+    threading.Thread(target=_run, daemon=True, name=f"post-{clip_id}").start()
+    return RedirectResponse("/posts?msg=" + urllib.parse.quote(
+        f"Posting clip #{clip_id} to {acc.name}. Refresh in a minute to see the result."), status_code=303)
 
 
 @app.post("/clips/{clip_id}/{action}")
@@ -127,7 +162,8 @@ def act(clip_id: int, action: str, caption: str | None = Form(None), back: str =
 
 @app.get("/posts", response_class=HTMLResponse)
 def posts(request: Request, _=Depends(auth)):
-    return templates.TemplateResponse(request, "posts.html", {"posts": db.recent_posts(100)})
+    return templates.TemplateResponse(request, "posts.html", {
+        "posts": db.recent_posts(100), "flash": request.query_params.get("msg"), "dry_run": settings.dry_run})
 
 
 @app.get("/media/{name}")
@@ -155,6 +191,7 @@ def tiktok_start(account: str, _=Depends(auth)):
     q = urllib.parse.urlencode({
         "client_key": os.environ.get("TIKTOK_CLIENT_KEY", ""), "scope": tiktok.SCOPES,
         "response_type": "code", "redirect_uri": _redirect_uri(), "state": state,
+        "disable_auto_auth": 1,  # always show TikTok's consent screen, so you can check which account it is
     })
     return RedirectResponse(f"{tiktok.AUTH_URL}?{q}")
 
@@ -165,8 +202,11 @@ def tiktok_callback(code: str = "", state: str = "", error: str = ""):
     if error or not account_name:
         raise HTTPException(400, f"TikTok auth failed: {error or 'unknown state'}")
     account = next(a for a in load_app_config(settings.accounts_file).accounts if a.name == account_name)
-    TokenStore(settings, account).save(tiktok.exchange_code(code, _redirect_uri()))
-    return f"<p>Connected TikTok account <b>{account_name}</b>. You can close this tab.</p>"
+    data = tiktok.exchange_code(code, _redirect_uri())
+    data["display_name"] = tiktok.display_name(data["access_token"]) or account_name
+    TokenStore(settings, account).save(data)
+    msg = f"Connected {account_name} as {data['display_name']}"
+    return RedirectResponse("/?status=approved&msg=" + urllib.parse.quote(msg), status_code=303)
 
 
 # Background worker ---------------------------------------------------------------
