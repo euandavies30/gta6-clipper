@@ -35,7 +35,12 @@ class Segment:
 
 def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
     log.debug("run: %s", " ".join(cmd))
-    return subprocess.run(cmd, check=True, capture_output=True, **kw)
+    res = subprocess.run(cmd, capture_output=True, **kw)
+    if res.returncode != 0:
+        err = (res.stderr or b"").decode("utf-8", "replace").strip()[-600:]
+        hint = " (killed: probably out of memory)" if res.returncode in (-9, 137) else ""
+        raise RuntimeError(f"{cmd[0]} exited {res.returncode}{hint}: {err}")
+    return res
 
 
 def probe_duration(path: Path) -> float:
@@ -134,11 +139,13 @@ def extract_audio(src: Path, start: float, end: float, out: Path) -> Path:
 def render_vertical(src: Path, start: float, end: float, out: Path, ass_file: Path | None = None) -> Path:
     """Blurred-background 9:16 render with the original frame centered, captions burned in."""
     out.parent.mkdir(parents=True, exist_ok=True)
+    # Shrink first (4K trailers would otherwise blow small containers' memory), blur at low res.
+    bw, bh = W // 4, H // 4
     graph = (
-        f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
-        f"gblur=sigma=40,eq=brightness=-0.08[bg];"
-        f"[0:v]scale={W}:{H}:force_original_aspect_ratio=decrease[fg];"
-        f"[bg][fg]overlay=(W-w)/2:(H-h)/2,fps=30,format=yuv420p"
+        f"[0:v]fps=30,scale={W}:{H}:force_original_aspect_ratio=decrease,split[a][fg];"
+        f"[a]scale={bw}:{bh}:force_original_aspect_ratio=increase,crop={bw}:{bh},"
+        f"boxblur=10:2,eq=brightness=-0.08,scale={W}:{H}[bg];"
+        f"[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p"
     )
     if ass_file:
         graph += f",subtitles='{_ff_escape(ass_file)}'"
@@ -146,7 +153,7 @@ def render_vertical(src: Path, start: float, end: float, out: Path, ass_file: Pa
     run([
         "ffmpeg", "-y", "-v", "error", "-ss", f"{start}", "-i", str(src), "-t", f"{end - start}",
         "-filter_complex", graph, "-map", "[v]", "-map", "0:a?",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-threads", "2",
         "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-movflags", "+faststart", str(out),
     ])
     return out

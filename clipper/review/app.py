@@ -215,16 +215,18 @@ def worker_loop(stop: threading.Event) -> None:
     while not stop.is_set():
         try:
             app_cfg = load_app_config(settings.accounts_file)
-            if time.time() - last_ingest > settings.ingest_every_hours * 3600:
+            if _ingest_now.is_set() or time.time() - last_ingest > settings.ingest_every_hours * 3600:
+                _ingest_now.clear()
                 log.info("ingest: %s", pipeline.ingest(settings, app_cfg, db))
                 last_ingest = time.time()
             scheduler.tick(settings, app_cfg, db)
         except Exception:
             log.exception("worker tick failed")
-        stop.wait(settings.tick_seconds)
+        _ingest_now.wait(settings.tick_seconds)
 
 
 _stop = threading.Event()
+_ingest_now = threading.Event()  # set to make the worker ingest on its next loop
 
 
 @app.on_event("startup")
@@ -309,8 +311,18 @@ def add_url(url: str = Form(...), title: str = Form(""), credit: str = Form(""),
 def sources(_=Depends(auth)):
     """Plain-text list of sources and their status (handy for debugging failed downloads)."""
     with db.conn() as c:
-        rows = c.execute("SELECT id, kind, status, title, url, substr(error,1,200) e FROM sources ORDER BY id DESC LIMIT 50").fetchall()
+        rows = c.execute("SELECT id, kind, status, title, url, substr(error,-400) e FROM sources ORDER BY id DESC LIMIT 50").fetchall()
     return "\n".join(f"#{r['id']} [{r['kind']}/{r['status']}] {r['title']} {r['url'] or ''} {r['e'] or ''}" for r in rows)
+
+
+@app.post("/sources/retry", response_class=PlainTextResponse)
+def retry_sources(_=Depends(auth)):
+    """Re-queue failed sources and ask the worker to ingest now."""
+    with db.conn() as c:
+        n = c.execute("UPDATE sources SET status = CASE WHEN local_path IS NOT NULL AND local_path != '' "
+                      "THEN 'downloaded' ELSE 'new' END, error = NULL WHERE status = 'failed'").rowcount
+    _ingest_now.set()
+    return f"re-queued {n} failed sources; ingest starting"
 
 
 # Domain verification (must stay the last route: it matches any top-level path) --------
