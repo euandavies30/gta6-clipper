@@ -11,6 +11,16 @@
   <span class="pill">{{ accounts|length }} accounts</span>
 </header>
 <main>
+  <details style="margin-bottom:16px">
+    <summary style="cursor:pointer;color:var(--muted)">Upload a video to clip</summary>
+    <form method="post" action="/upload" enctype="multipart/form-data" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;align-items:center">
+      <input type="file" name="file" accept="video/*" required>
+      <input name="title" placeholder="Title, e.g. GTA 6 Trailer 2" style="flex:1;min-width:180px;padding:8px;border-radius:8px;border:1px solid #2c303a;background:#0e0f13;color:var(--text)">
+      <input name="credit" placeholder="Credit, e.g. Rockstar Games" style="flex:1;min-width:160px;padding:8px;border-radius:8px;border:1px solid #2c303a;background:#0e0f13;color:var(--text)">
+      <button class="approve" type="submit" style="flex:0 0 auto;padding:9px 18px">Upload</button>
+    </form>
+    <p class="meta">Clips appear in Pending a few minutes after the upload finishes. Refresh to check.</p>
+  </details>
   {% if not clips %}<p class="meta">No {{ status }} clips.</p>{% endif %}
   <div class="grid">
   {% for c in clips %}

@@ -13,13 +13,15 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import secrets
+import shutil
 import threading
 import time
 import urllib.parse
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
@@ -71,22 +73,6 @@ contact {email}.</p>"""),
 responsible for the content posted and for following TikTok's and Instagram's terms and community guidelines.</p>
 <p>The service is provided as is, without warranty. Questions: {email}.</p>"""),
 }
-
-
-@app.get("/{name}.txt", response_class=PlainTextResponse)
-def site_verification(name: str):
-    """Serves a domain verification file, e.g. the one TikTok's developer portal asks for.
-
-    Set TIKTOK_VERIFY_FILENAME (e.g. tiktokAbC123.txt) and TIKTOK_VERIFY_CONTENT to the file's text.
-    """
-    wanted = (os.getenv("TIKTOK_VERIFY_FILENAME") or "").strip().strip('"').rsplit("/", 1)[-1]
-    content = (os.getenv("TIKTOK_VERIFY_CONTENT") or "").strip().strip('"')
-    if wanted.lower().endswith(".txt"):
-        wanted = wanted[:-4]
-    if not wanted or not content or name.strip().lower() != wanted.lower():
-        log.warning("verification file %s.txt requested; configured name is %r", name, wanted or None)
-        raise HTTPException(404)
-    return content
 
 
 @app.get("/privacy", response_class=HTMLResponse)
@@ -195,3 +181,54 @@ def _start_worker():
 @app.on_event("shutdown")
 def _stop_worker():
     _stop.set()
+
+
+# Manual upload ---------------------------------------------------------------------
+@app.post("/upload")
+def upload(file: UploadFile = File(...), title: str = Form(""), credit: str = Form(""), _=Depends(auth)):
+    """Upload a video (e.g. a trailer you downloaded, or a streamer clip you have permission for).
+
+    The file is saved and clipped in the background; new clips show up in Pending a few minutes later.
+    """
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(file.filename or "upload.mp4").name)
+    if Path(name).suffix.lower() not in {".mp4", ".mov", ".mkv", ".webm", ".m4v"}:
+        raise HTTPException(400, "Upload an .mp4, .mov, .mkv, .webm or .m4v video")
+    dest = settings.raw_dir / f"{int(time.time())}_{name}"
+    with dest.open("wb") as out:
+        shutil.copyfileobj(file.file, out, length=8 * 1024 * 1024)
+    src_id = db.add_source("inbox", dest.name, title=title.strip() or Path(name).stem,
+                           credit=credit.strip() or None, local_path=str(dest))
+
+    def _cut():
+        try:
+            app_cfg = load_app_config(settings.accounts_file)
+            pipeline.cut_source(settings, app_cfg, db, db.get_source(src_id))
+            db.update_source(src_id, status="cut")
+        except Exception as e:
+            log.exception("clipping upload %s failed", dest.name)
+            db.update_source(src_id, status="failed", error=str(e)[:1000])
+
+    if src_id:
+        threading.Thread(target=_cut, daemon=True, name=f"cut-{src_id}").start()
+    return RedirectResponse("/?status=pending&uploaded=1", status_code=303)
+
+
+# Domain verification (must stay the last route: it matches any top-level path) --------
+@app.get("/{name}", response_class=PlainTextResponse)
+def site_verification(name: str):
+    """Serves the URL-verification file TikTok's developer portal asks for.
+
+    Set TIKTOK_VERIFY_FILENAME (e.g. tiktokAbC123.txt) and TIKTOK_VERIFY_CONTENT to the file's text.
+    Works with or without the .txt on the end of the URL.
+    """
+    def base(n: str) -> str:
+        n = n.strip().strip('"').rsplit("/", 1)[-1]
+        return n[:-4] if n.lower().endswith(".txt") else n
+
+    wanted = base(os.getenv("TIKTOK_VERIFY_FILENAME") or "")
+    content = (os.getenv("TIKTOK_VERIFY_CONTENT") or "").strip().strip('"')
+    if not wanted or not content or base(name).lower() != wanted.lower():
+        if name.lower().startswith("tiktok"):
+            log.warning("verification file %s requested; configured name is %r", name, wanted or None)
+        raise HTTPException(404)
+    return content

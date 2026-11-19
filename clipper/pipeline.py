@@ -26,12 +26,15 @@ def discover(settings: Settings, app: AppConfig, db: DB) -> int:
 
 
 def download_new(settings: Settings, db: DB) -> None:
-    for src in db.sources_with_status("new"):
+    cookies = youtube.cookie_file(settings.data_dir)
+    # Failed YouTube downloads are retried each ingest (e.g. after cookies are added).
+    retry = [s for s in db.sources_with_status("failed") if s["kind"] == "youtube" and not s["local_path"]]
+    for src in list(db.sources_with_status("new")) + retry:
         try:
-            path = youtube.download(src["url"], settings.raw_dir, src["external_id"])
+            path = youtube.download(src["url"], settings.raw_dir, src["external_id"], cookies)
             db.update_source(src["id"], local_path=str(path), status="downloaded")
         except Exception as e:
-            log.exception("download failed: %s", src["url"])
+            log.error("download failed: %s: %s", src["url"], str(e).splitlines()[0][:300])
             db.update_source(src["id"], status="failed", error=str(e)[:1000])
 
 

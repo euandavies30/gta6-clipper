@@ -49,8 +49,14 @@ is due), `schedule` (today's slots), `status`, `approve <ids|all>`.
 
 * **YouTube** (`YOUTUBE_API_KEY`): new uploads from `youtube_channels` whose
   titles match `title_keywords`. Downloaded with yt-dlp.
-* **Inbox:** drop files into `$DATA_DIR/inbox/`, named `Credit - Title.mp4`.
-  Use this for streamer clips you have permission to post.
+* **Upload:** the review app has an *Upload a video to clip* box. Use it for
+  streamer clips you have permission to post, or trailers you downloaded yourself.
+* **Inbox:** or drop files into `$DATA_DIR/inbox/`, named `Credit - Title.mp4`.
+
+GTA trailers are age-restricted, so YouTube asks servers to sign in before
+downloading them. Either upload the trailer yourself, or set `YTDLP_COOKIES` to
+a cookies.txt exported from a browser signed in to an 18+ YouTube account (use
+a spare account, not your main one). Failed downloads retry on the next ingest.
 
 Rockstar's trailers are still Rockstar's copyright. Accounts that repost
 them can get takedowns or strikes, so the captions and hooks are there to make

@@ -7,6 +7,7 @@ Only list channels you have the right to repost from in accounts.yaml.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -80,7 +81,27 @@ def discover(db: DB, channels: list[str], keywords: list[str], api_key: str, lim
     return added
 
 
-def download(url: str, out_dir: Path, video_id: str) -> Path:
+def cookie_file(data_dir: Path) -> Path | None:
+    """YouTube makes logged-out servers "sign in to confirm your age" for trailers.
+
+    Put the contents of a Netscape-format cookies.txt (exported from a browser that is
+    signed in to an 18+ YouTube account) in YTDLP_COOKIES and downloads use it.
+    """
+    raw = os.getenv("YTDLP_COOKIES", "").strip()
+    if not raw:
+        return None
+    path = data_dir / "yt-cookies.txt"
+    if not raw.startswith("# Netscape"):
+        raw = "# Netscape HTTP Cookie File\n" + raw
+    path.write_text(raw.replace("\\t", "\t") + "\n")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return path
+
+
+def download(url: str, out_dir: Path, video_id: str, cookies: Path | None = None) -> Path:
     import yt_dlp
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -91,6 +112,8 @@ def download(url: str, out_dir: Path, video_id: str) -> Path:
         "quiet": True,
         "noprogress": True,
     }
+    if cookies:
+        opts["cookiefile"] = str(cookies)
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url])
     path = out_dir / f"{video_id}.mp4"
