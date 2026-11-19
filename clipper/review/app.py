@@ -232,6 +232,8 @@ _ingest_now = threading.Event()  # set to make the worker ingest on its next loo
 @app.on_event("startup")
 def _start_worker():
     if os.getenv("RUN_WORKER", "true").lower() in {"1", "true", "yes"}:
+        # A new deploy usually carries a fix, so give failed sources another go.
+        log.info("startup: re-queued %s failed sources", _requeue_failed())
         threading.Thread(target=worker_loop, args=(_stop,), daemon=True, name="worker").start()
 
 
@@ -315,12 +317,16 @@ def sources(_=Depends(auth)):
     return "\n".join(f"#{r['id']} [{r['kind']}/{r['status']}] {r['title']} {r['url'] or ''} {r['e'] or ''}" for r in rows)
 
 
+def _requeue_failed() -> int:
+    with db.conn() as c:
+        return c.execute("UPDATE sources SET status = CASE WHEN local_path IS NOT NULL AND local_path != '' "
+                         "THEN 'downloaded' ELSE 'new' END, error = NULL WHERE status = 'failed'").rowcount
+
+
 @app.post("/sources/retry", response_class=PlainTextResponse)
 def retry_sources(_=Depends(auth)):
     """Re-queue failed sources and ask the worker to ingest now."""
-    with db.conn() as c:
-        n = c.execute("UPDATE sources SET status = CASE WHEN local_path IS NOT NULL AND local_path != '' "
-                      "THEN 'downloaded' ELSE 'new' END, error = NULL WHERE status = 'failed'").rowcount
+    n = _requeue_failed()
     _ingest_now.set()
     return f"re-queued {n} failed sources; ingest starting"
 
