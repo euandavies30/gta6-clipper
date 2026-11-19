@@ -20,7 +20,7 @@ import urllib.parse
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
@@ -71,6 +71,17 @@ contact {email}.</p>"""),
 responsible for the content posted and for following TikTok's and Instagram's terms and community guidelines.</p>
 <p>The service is provided as is, without warranty. Questions: {email}.</p>"""),
 }
+
+
+@app.get("/{name}.txt", response_class=PlainTextResponse)
+def site_verification(name: str):
+    """Serves a domain verification file, e.g. the one TikTok's developer portal asks for.
+
+    Set TIKTOK_VERIFY_FILENAME (e.g. tiktokAbC123.txt) and TIKTOK_VERIFY_CONTENT to the file's text.
+    """
+    if f"{name}.txt" != os.getenv("TIKTOK_VERIFY_FILENAME") or not os.getenv("TIKTOK_VERIFY_CONTENT"):
+        raise HTTPException(404)
+    return os.environ["TIKTOK_VERIFY_CONTENT"]
 
 
 @app.get("/privacy", response_class=HTMLResponse)
