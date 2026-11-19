@@ -367,14 +367,31 @@ def add_url(url: str = Form(...), title: str = Form(""), credit: str = Form(""),
         raise HTTPException(400, str(e))
     secs = max(10.0, min(secs, 180.0))
     section = (t0, t0 + secs) if t0 is not None else None
+    from ..sources import twitch
+    expand_clip = section is None and twitch.is_clip(url)
 
     def _run():
+        nonlocal url, section
         src_id = None
         try:
             key = re.sub(r"[^A-Za-z0-9]+", "_", url)[-70:] + (f"_{int(section[0])}" if section else "")
             src_id = db.add_source("link", key, title=title.strip() or None, url=url, credit=credit.strip() or None)
             if not src_id:
                 return
+            if expand_clip:
+                # A short Twitch clip -> the full minute around it from the streamer's VOD.
+                try:
+                    m = twitch.find_moment(url, secs)
+                except Exception as e:
+                    log.warning("couldn't find the VOD for %s, using the clip itself: %s", url, e)
+                    m = None
+                if m:
+                    url, section = m.vod_url, (m.start, m.start + secs)
+                    db.update_source(src_id, url=url)
+                    if not title.strip() and m.title:
+                        db.update_source(src_id, title=m.title)
+                    if not credit.strip() and m.channel:
+                        db.update_source(src_id, credit=m.channel)
             if pipeline.is_direct_video(url) and not section:
                 path = url  # streamed by ffmpeg, never stored
             else:

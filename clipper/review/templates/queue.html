@@ -37,7 +37,7 @@
       <input name="length" placeholder="Secs (65)" inputmode="numeric" style="flex:0 1 90px;padding:8px;border-radius:8px;border:1px solid #2c303a;background:#0e0f13;color:var(--text)">
       <button class="approve" type="submit" style="flex:0 0 auto;padding:9px 18px">Clip link</button>
     </form>
-    <p class="meta">With a start time (or a Twitch VOD link with ?t=) you get one clip of that moment, 65s by default, with the title as the on-screen hook. Clips appear in Pending a few minutes later. Refresh to check. <a href="/sources" style="color:var(--muted)">Source status</a></p>
+    <p class="meta">A Twitch clip link is stretched to the full minute around it from the streamer's VOD. With a start time (or a Twitch VOD link with ?t=) you get one clip of that moment, 65s by default, with the title as the on-screen hook. Clips appear in Pending a few minutes later. Refresh to check. <a href="/sources" style="color:var(--muted)">Source status</a></p>
   </details>
   {% if not clips %}<p class="meta">No {{ status }} clips.</p>{% endif %}
   <div class="grid">
