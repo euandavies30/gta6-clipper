@@ -166,7 +166,8 @@ def publish_form(request: Request, clip_id: int, account: str, _=Depends(auth)):
     if not clip:
         raise HTTPException(404)
     creator, error = {}, None
-    if acc.platform == "tiktok" and not settings.dry_run:
+    inbox = (acc.mode or os.getenv("TIKTOK_MODE", "direct")).lower() == "inbox"
+    if acc.platform == "tiktok" and not settings.dry_run and not inbox:
         from ..posters.tiktok import TikTokPoster
         try:
             creator = TikTokPoster(acc, settings).creator_info()
@@ -178,12 +179,12 @@ def publish_form(request: Request, clip_id: int, account: str, _=Depends(auth)):
         "clip": clip, "account": acc, "creator": creator, "error": error, "labels": PRIVACY_LABELS,
         "privacy_options": creator.get("privacy_level_options") or ["SELF_ONLY"],
         "too_long": bool(max_dur and duration > max_dur), "duration": duration, "max_dur": max_dur,
-        "caption": with_hashtags(clip["caption"] or "", acc.hashtags),
+        "caption": with_hashtags(clip["caption"] or "", acc.hashtags), "inbox": inbox,
     })
 
 
 @app.post("/clips/{clip_id}/publish")
-def publish(clip_id: int, account: str = Form(...), caption: str = Form(""), privacy: str = Form(...),
+def publish(clip_id: int, account: str = Form(...), caption: str = Form(""), privacy: str = Form("SELF_ONLY"),
             allow_comment: bool = Form(False), allow_duet: bool = Form(False), allow_stitch: bool = Form(False),
             disclose: bool = Form(False), brand_organic: bool = Form(False), brand_content: bool = Form(False),
             _=Depends(auth)):

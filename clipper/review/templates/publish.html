@@ -2,7 +2,7 @@
 {% block body %}
 <header><h1>GTA 6 Clipper</h1><a href="/">Queue</a><a href="/posts">Posts</a></header>
 <main style="max-width:900px">
-  <h2 style="margin-top:0">Post to TikTok</h2>
+  <h2 style="margin-top:0">{{ 'Send to TikTok drafts' if inbox else 'Post to TikTok' }}</h2>
   {% if error %}<p class="failed">Couldn't load your TikTok account: {{ error }}. Reconnect it on the Queue page.</p>{% endif %}
   <div style="display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start">
     <video src="/media/{{ clip.path.split('/')[-1] }}" controls playsinline style="width:260px;border-radius:12px"></video>
@@ -14,6 +14,16 @@
           {% if creator.creator_username %}<span class="meta">@{{ creator.creator_username }}</span>{% endif %}</div>
       </div>
 
+      {% if inbox %}
+      <p>This sends the clip to <b>{{ account.name }}</b>'s TikTok inbox as a draft. Open TikTok on your phone, tap the notification, add a sound if you like, and post it.</p>
+      <p class="meta">TikTok drafts don't carry a caption, so copy it from here:</p>
+      <textarea readonly onclick="this.select()">{{ caption }}</textarea>
+      <input type="hidden" name="caption" value="{{ caption }}">
+      <button class="approve" type="submit">Send to TikTok drafts</button>
+    </form>
+  </div>
+</main>
+{% else %}
       <label>Caption
         <textarea name="caption" maxlength="2200">{{ caption }}</textarea>
       </label>
@@ -74,4 +84,5 @@ function update() {
 $('f').addEventListener('submit', () => { $('go').disabled = true; $('go').textContent = 'Posting…'; });
 update();
 </script>
+{% endif %}
 {% endblock %}

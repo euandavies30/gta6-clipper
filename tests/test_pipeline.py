@@ -162,13 +162,46 @@ def test_direct_video_links_are_streamed_not_downloaded(db, settings):
 def test_publish_page_and_options(settings, db, monkeypatch, tmp_path):
     monkeypatch.setenv("REVIEW_PASSWORD", "pw")
     from fastapi.testclient import TestClient
+    from clipper.config import AppConfig, SourceConfig
     from clipper.review import app as review
     monkeypatch.setattr(review, "db", db)
     add_clips(db, 1)
     c = TestClient(review.app)
     r = c.get("/clips/1/publish?account=tt_main", auth=("admin", "pw"))
-    assert r.status_code == 200 and "Who can view this video" in r.text and "Music Usage Confirmation" in r.text
+    assert r.status_code == 200 and "Send to TikTok drafts" in r.text  # shipped config uses inbox mode
+    monkeypatch.setattr(review, "load_app_config", lambda *_: AppConfig(
+        accounts=[acc("tt_main")], sources=SourceConfig(), caption_templates=["x"]))
+    r = c.get("/clips/1/publish?account=tt_main", auth=("admin", "pw"))
+    assert "Who can view this video" in r.text and "Music Usage Confirmation" in r.text
     assert '<option value="" selected disabled>' in r.text
     r = c.post("/clips/1/publish", auth=("admin", "pw"), follow_redirects=False,
                data={"account": "tt_main", "caption": "hi", "privacy": "SELF_ONLY", "allow_comment": "true"})
     assert r.status_code == 303
+
+
+def test_tiktok_inbox_mode_uses_draft_endpoint(settings, tmp_path, monkeypatch):
+    monkeypatch.setenv("TIKTOK_CLIENT_KEY", "k")
+    monkeypatch.setenv("TIKTOK_CLIENT_SECRET", "s")
+    monkeypatch.setenv("TT_RT", "refresh")
+    a = acc()
+    a.poster, a.env, a.mode = "tiktok", {"refresh_token": "TT_RT"}, "inbox"
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"0" * 10)
+    calls = []
+
+    def fake_post(url, **kw):
+        calls.append(url)
+        r = mock.Mock(status_code=200)
+        if url.endswith("/oauth/token/"):
+            r.json.return_value = {"access_token": "AT", "expires_in": 86400}
+        elif "inbox/video/init" in url:
+            r.json.return_value = {"data": {"publish_id": "P2", "upload_url": "https://up"}, "error": {"code": "ok"}}
+        elif "status/fetch" in url:
+            r.json.return_value = {"data": {"status": "SEND_TO_USER_INBOX"}, "error": {"code": "ok"}}
+        return r
+
+    with mock.patch("clipper.posters.tiktok.requests.post", side_effect=fake_post), \
+         mock.patch("clipper.posters.tiktok.requests.put", return_value=mock.Mock(status_code=201)):
+        res = TikTokPoster(a, settings).post(video, "c")
+    assert res.remote_id == "P2" and "inbox" in res.note
+    assert not any("creator_info" in u for u in calls)

@@ -57,6 +57,8 @@ class TikTokPoster(Poster):
     def __init__(self, account, settings):
         super().__init__(account, settings)
         self.tokens = TokenStore(settings, account)
+        # mode: inbox (drafts the creator posts from the app) or direct (needs TikTok's app audit to go public)
+        self.inbox = (account.mode or os.getenv("TIKTOK_MODE", "direct")).lower() == "inbox"
 
     # auth ------------------------------------------------------------------
     def _access_token(self) -> str:
@@ -98,6 +100,16 @@ class TikTokPoster(Poster):
              allow_duet: bool = True, allow_stitch: bool = True, brand_organic: bool = False,
              brand_content: bool = False, **_) -> PostResult:
         token = self._access_token()
+        size = video.stat().st_size
+        if self.inbox:
+            # Draft to the creator's TikTok inbox: no app audit needed; they finish and post it in the app.
+            chunk, count = self._chunks(size)
+            init = self._api("/post/publish/inbox/video/init/", token, {
+                "source_info": {"source": "FILE_UPLOAD", "video_size": size,
+                                "chunk_size": chunk, "total_chunk_count": count}})
+            self._upload(video, init["upload_url"], size, chunk, count)
+            status = self._wait(token, init["publish_id"])
+            return PostResult(remote_id=init["publish_id"], note=f"{status} (draft in TikTok inbox)")
         creator = self._api("/post/publish/creator_info/query/", token, {})
         options = creator.get("privacy_level_options") or ["SELF_ONLY"]
         wanted = privacy or os.getenv("TIKTOK_PRIVACY", "SELF_ONLY")
@@ -105,13 +117,7 @@ class TikTokPoster(Poster):
         if brand_content and privacy == "SELF_ONLY":
             raise PostError("Branded content can't be posted privately (TikTok rule)")
 
-        size = video.stat().st_size
-        if size <= 64 * MB:
-            chunk, count = size, 1
-        else:
-            chunk = 10 * MB
-            count = math.floor(size / chunk)  # last chunk absorbs the remainder (allowed up to 128MB)
-
+        chunk, count = self._chunks(size)
         init = self._api("/post/publish/video/init/", token, {
             "post_info": {
                 "title": caption[:2200],
@@ -126,8 +132,18 @@ class TikTokPoster(Poster):
             "source_info": {"source": "FILE_UPLOAD", "video_size": size,
                             "chunk_size": chunk, "total_chunk_count": count},
         })
-        publish_id, upload_url = init["publish_id"], init["upload_url"]
+        publish_id = init["publish_id"]
+        self._upload(video, init["upload_url"], size, chunk, count)
+        status = self._wait(token, publish_id)
+        return PostResult(remote_id=publish_id, note=f"{status} ({privacy})")
 
+    @staticmethod
+    def _chunks(size: int) -> tuple[int, int]:
+        if size <= 64 * MB:
+            return size, 1
+        return 10 * MB, math.floor(size / (10 * MB))  # last chunk absorbs the remainder (allowed up to 128MB)
+
+    def _upload(self, video: Path, upload_url: str, size: int, chunk: int, count: int) -> None:
         with video.open("rb") as f:
             for i in range(count):
                 start = i * chunk
@@ -141,9 +157,6 @@ class TikTokPoster(Poster):
                 })
                 if r.status_code not in (200, 201, 206):
                     raise PostError(f"TikTok chunk {i} upload failed: {r.status_code} {r.text[:300]}")
-
-        status = self._wait(token, publish_id)
-        return PostResult(remote_id=publish_id, note=f"{status} ({privacy})")
 
     def _wait(self, token: str, publish_id: str, timeout: int = 300) -> str:
         deadline = time.time() + timeout

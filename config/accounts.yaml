@@ -12,6 +12,7 @@ accounts:
   - name: tt_main
     platform: tiktok
     poster: tiktok
+    mode: inbox  # drafts land in the TikTok app inbox; tap to post publicly (no app review needed)
     posts_per_day: 4
     active_hours: [9, 23]
     timezone: Europe/London
@@ -23,6 +24,7 @@ accounts:
   - name: tt_second
     platform: tiktok
     poster: tiktok
+    mode: inbox
     posts_per_day: 3
     active_hours: [11, 23]
     timezone: Europe/London

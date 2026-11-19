@@ -77,6 +77,7 @@ class Account:
     min_gap_minutes: int = 90
     hashtags: list[str] = field(default_factory=list)
     enabled: bool = True
+    mode: str | None = None  # tiktok: "inbox" (drafts) or "direct"
     env: dict[str, str] = field(default_factory=dict)  # logical key -> ENV VAR NAME
 
     def secret(self, key: str) -> str | None:
