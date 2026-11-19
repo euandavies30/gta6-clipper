@@ -16,7 +16,7 @@ FONT = os.getenv("CAPTION_FONT", "DejaVu Sans")
 def _model(name: str):
     from faster_whisper import WhisperModel
 
-    return WhisperModel(name, device="auto", compute_type="int8")
+    return WhisperModel(name, device="auto", compute_type="int8", cpu_threads=2)
 
 
 def transcribe(audio: Path, model_name: str = "small") -> list[dict]:

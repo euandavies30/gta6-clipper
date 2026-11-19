@@ -51,7 +51,7 @@ def probe_duration(path: Path) -> float:
 def loudness_curve(path: Path, duration: float) -> np.ndarray:
     sr = 8000
     try:
-        out = run(["ffmpeg", "-v", "error", "-i", str(path), "-vn", "-ac", "1", "-ar", str(sr), "-f", "s16le", "-"])
+        out = run(["ffmpeg", "-v", "error", "-threads", "1", "-i", str(path), "-vn", "-ac", "1", "-ar", str(sr), "-f", "s16le", "-"])
     except subprocess.CalledProcessError:
         return np.zeros(int(np.ceil(duration / STEP)))
     pcm = np.frombuffer(out.stdout, dtype=np.int16).astype(np.float32)
@@ -67,7 +67,7 @@ def loudness_curve(path: Path, duration: float) -> np.ndarray:
 
 def scene_cuts(path: Path, threshold: float = 0.3) -> list[float]:
     proc = subprocess.run(
-        ["ffmpeg", "-hide_banner", "-i", str(path), "-an",
+        ["ffmpeg", "-hide_banner", "-threads", "1", "-i", str(path), "-an",
          "-vf", f"scale=320:-2,select='gt(scene,{threshold})',showinfo", "-f", "null", "-"],
         capture_output=True, text=True,
     )
@@ -131,7 +131,7 @@ def _snap_to_cut(t: float, cuts: list[float], before: bool = True, window: float
 
 
 def extract_audio(src: Path, start: float, end: float, out: Path) -> Path:
-    run(["ffmpeg", "-y", "-v", "error", "-ss", f"{start}", "-i", str(src), "-t", f"{end - start}",
+    run(["ffmpeg", "-y", "-v", "error", "-ss", f"{start}", "-threads", "1", "-i", str(src), "-t", f"{end - start}",
          "-vn", "-ac", "1", "-ar", "16000", str(out)])
     return out
 
@@ -151,9 +151,9 @@ def render_vertical(src: Path, start: float, end: float, out: Path, ass_file: Pa
         graph += f",subtitles='{_ff_escape(ass_file)}'"
     graph += "[v]"
     run([
-        "ffmpeg", "-y", "-v", "error", "-ss", f"{start}", "-i", str(src), "-t", f"{end - start}",
-        "-filter_complex", graph, "-map", "[v]", "-map", "0:a?",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-threads", "2",
+        "ffmpeg", "-y", "-v", "error", "-ss", f"{start}", "-threads", "1", "-i", str(src), "-t", f"{end - start}",
+        "-filter_threads", "1", "-filter_complex", graph, "-map", "[v]", "-map", "0:a?",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-threads", "1", "-x264-params", "rc-lookahead=10",
         "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-movflags", "+faststart", str(out),
     ])
     return out

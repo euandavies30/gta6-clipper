@@ -35,7 +35,7 @@ class Settings:
     # Dry run: posters log what they would do instead of calling any API.
     dry_run: bool = field(default_factory=lambda: _bool("DRY_RUN", True))
     youtube_api_key: str | None = field(default_factory=lambda: os.getenv("YOUTUBE_API_KEY"))
-    whisper_model: str = field(default_factory=lambda: os.getenv("WHISPER_MODEL", "small"))
+    whisper_model: str = field(default_factory=lambda: os.getenv("WHISPER_MODEL", "base"))
     review_user: str = field(default_factory=lambda: os.getenv("REVIEW_USER", "admin"))
     review_password: str | None = field(default_factory=lambda: os.getenv("REVIEW_PASSWORD"))
     public_base_url: str | None = field(default_factory=lambda: os.getenv("PUBLIC_BASE_URL"))
