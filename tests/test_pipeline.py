@@ -250,3 +250,63 @@ def test_moment_link_downloads_only_the_window_and_makes_one_clip(settings, monk
         clips = c.execute("SELECT * FROM clips").fetchall()
     assert len(clips) == 1 and clips[0]["status"] == "pending"
     assert "Follow for daily GTA 6 streamer clips" in clips[0]["caption"]
+
+
+def test_twitch_clip_maps_into_its_vod():
+    from clipper.sources import twitch
+    assert twitch.is_clip("https://www.twitch.tv/jynxzi/clip/FastBeautifulTigerBrokeBack-720YxwNhOm5O")
+    assert twitch.is_clip("https://clips.twitch.tv/FastBeautifulTigerBrokeBack-720YxwNhOm5O")
+    assert not twitch.is_clip("https://www.twitch.tv/videos/2932568279")
+    # stream started at t=1000, 40s clip made at t=1000+3600 -> clip is 3560..3600 in the VOD
+    start = twitch.window(4600, 40, 1000, 65)
+    assert 3530 < start < 3560 and start + 65 > 3600
+
+    infos = {
+        "clip": {"timestamp": 4600, "duration": 40, "channel": "Jynxzi", "title": "aligator"},
+        "list": {"entries": [{"url": "https://www.twitch.tv/videos/2"}, {"url": "https://www.twitch.tv/videos/1"}]},
+        "https://www.twitch.tv/videos/2": {"timestamp": 9000, "duration": 100},
+        "https://www.twitch.tv/videos/1": {"timestamp": 1000, "duration": 8000},
+    }
+
+    class FakeYDL:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def extract_info(self, url, download=False, process=False):
+            return infos["clip"] if "/clip/" in url else infos["list"] if "/videos?" in url else infos[url]
+
+    with mock.patch("yt_dlp.YoutubeDL", FakeYDL):
+        m = twitch.find_moment("https://www.twitch.tv/jynxzi/clip/abc", 65)
+    assert m.vod_url.endswith("/videos/1") and m.channel == "Jynxzi" and m.title == "aligator"
+    assert m.start == start
+
+
+def test_twitch_clip_link_becomes_vod_window(settings, monkeypatch, tmp_path):
+    import subprocess
+    from fastapi.testclient import TestClient
+    from clipper import pipeline
+    from clipper.review import app as review
+    from clipper.sources import twitch
+
+    vid = tmp_path / "m.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=30:duration=3",
+                    "-f", "lavfi", "-i", "sine=duration=3", "-shortest", str(vid)], check=True)
+    seen = {}
+
+    def fake_download(url, out_dir, video_id, cookies=None, section=None):
+        seen.update(url=url, section=section)
+        return vid
+    monkeypatch.setattr("clipper.sources.youtube.download", fake_download)
+    monkeypatch.setattr(twitch, "find_moment",
+                        lambda url, length: twitch.Moment("https://www.twitch.tv/videos/9", 100.0, "aligator", "Jynxzi"))
+    monkeypatch.setattr(review.threading, "Thread",
+                        lambda target, **kw: type("T", (), {"start": staticmethod(target)})())
+    monkeypatch.setattr(pipeline.captions, "transcribe", lambda *a, **k: [])
+    monkeypatch.setattr(pipeline, "free_raw", lambda *a, **k: None)
+    r = TestClient(review.app).post("/add-url", data={"url": "https://clips.twitch.tv/SomeClip-abc"},
+                                    auth=("admin", review.settings.review_password or ""), follow_redirects=False)
+    assert r.status_code == 303
+    assert seen == {"url": "https://www.twitch.tv/videos/9", "section": (100.0, 165.0)}
+    with review.db.conn() as c:
+        src = c.execute("SELECT * FROM sources ORDER BY id DESC LIMIT 1").fetchone()
+    assert src["title"] == "aligator" and src["credit"] == "Jynxzi"
