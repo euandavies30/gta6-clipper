@@ -6,6 +6,5 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 ENV DATA_DIR=/data PYTHONUNBUFFERED=1
-VOLUME ["/data"]
 EXPOSE 8000
 CMD ["python", "-m", "clipper", "serve"]
