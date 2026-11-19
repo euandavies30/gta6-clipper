@@ -42,6 +42,17 @@ app = FastAPI(title="GTA 6 Clipper")
 _oauth_states: dict[str, str] = {}
 
 
+@app.middleware("http")
+async def collapse_slashes(request: Request, call_next):
+    """Treat //path like /path (TikTok's URL check adds a slash after a prefix that already ends in one)."""
+    path = request.scope["path"]
+    if "//" in path:
+        request.scope["path"] = re.sub(r"/{2,}", "/", path)
+    if request.scope["path"].lower().startswith("/tiktok"):
+        log.info("verification check: %s from %s", path, request.headers.get("user-agent", "?")[:80])
+    return await call_next(request)
+
+
 def auth(creds: HTTPBasicCredentials = Depends(security)) -> str:
     if not settings.review_password:
         raise HTTPException(503, "Set REVIEW_PASSWORD to use the review app")
