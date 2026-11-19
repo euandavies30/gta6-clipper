@@ -61,6 +61,9 @@ class Settings:
     def ensure_dirs(self) -> None:
         for d in (self.data_dir, self.raw_dir, self.clips_dir, self.inbox_dir):
             d.mkdir(parents=True, exist_ok=True)
+        # Half-finished downloads (e.g. after a full disk) only waste the volume.
+        for junk in list(self.raw_dir.glob("*.part")) + list(self.raw_dir.glob("*.ytdl")):
+            junk.unlink(missing_ok=True)
 
 
 @dataclass
