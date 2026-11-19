@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> None:
             from zoneinfo import ZoneInfo
             local = now.astimezone(ZoneInfo(acc.timezone))
             slots = ", ".join(s.strftime("%H:%M") for s in scheduler.daily_slots(acc, local))
-            print(f"{acc.name:<14} {acc.platform:<10} {acc.poster:<9} {slots} ({acc.timezone})")
+            print(f"{acc.name:<14} {acc.platform:<10} {acc.poster:<9} {slots if acc.enabled else 'OFF'} ({acc.timezone})")
     elif args.cmd == "status":
         for st in ("pending", "approved", "posted", "rejected"):
             print(f"{st:<9} {len(db.clips(st, limit=100000))}")

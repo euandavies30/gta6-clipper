@@ -33,6 +33,7 @@ accounts:
 
   - name: ig_main
     platform: instagram
+    enabled: false  # turn on once the Instagram account exists
     poster: instagram
     posts_per_day: 4
     active_hours: [9, 23]
@@ -45,6 +46,7 @@ accounts:
 
   - name: ig_second
     platform: instagram
+    enabled: false  # turn on once the Instagram account exists
     poster: instagram
     posts_per_day: 3
     active_hours: [11, 23]

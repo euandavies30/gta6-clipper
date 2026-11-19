@@ -55,6 +55,34 @@ def health():
     return {"ok": True}
 
 
+_LEGAL = {
+    "privacy": ("Privacy Policy", """
+<p>GTA VI Clips is a private tool that publishes short video clips to social media accounts owned by its operator.</p>
+<p><b>What we access.</b> When an account owner connects a TikTok or Instagram account, we receive an access token and
+basic profile information (such as the account's display name). We use these only to publish videos that the
+account owner has approved.</p>
+<p><b>What we store.</b> Access tokens and post history are stored on our server and are never sold or shared with
+third parties. We do not collect data about viewers or other users.</p>
+<p><b>Removal.</b> You can disconnect at any time from your TikTok or Instagram settings. To have stored data deleted,
+contact {email}.</p>"""),
+    "terms": ("Terms of Service", """
+<p>GTA VI Clips is a private publishing tool used only by its operator to post to accounts they own.</p>
+<p>By connecting an account you authorise the tool to upload and publish videos to it on your behalf. You are
+responsible for the content posted and for following TikTok's and Instagram's terms and community guidelines.</p>
+<p>The service is provided as is, without warranty. Questions: {email}.</p>"""),
+}
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+@app.get("/terms", response_class=HTMLResponse)
+def legal(request: Request):
+    title, body = _LEGAL[request.url.path.strip("/")]
+    email = os.getenv("CONTACT_EMAIL", "the account owner")
+    return (f"<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+            f"<title>{title}</title><body style='font:16px/1.6 system-ui;max-width:680px;margin:40px auto;"
+            f"padding:0 16px'><h1>{title}</h1>{body.format(email=email)}</body>")
+
+
 @app.get("/", response_class=HTMLResponse)
 def queue(request: Request, status: str = "pending", _=Depends(auth)):
     app_cfg = load_app_config(settings.accounts_file)
