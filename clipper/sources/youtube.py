@@ -101,7 +101,34 @@ def cookie_file(data_dir: Path) -> Path | None:
     return path
 
 
-def download(url: str, out_dir: Path, video_id: str, cookies: Path | None = None) -> Path:
+def parse_time(value: str | None) -> float | None:
+    """'1:02:03', '62:03', '3723', '1h2m3s' or '2m' -> seconds. Blank -> None."""
+    v = (value or "").strip().lower()
+    if not v:
+        return None
+    if re.fullmatch(r"\d+(\.\d+)?", v):
+        return float(v)
+    if re.fullmatch(r"\d+(:\d{1,2}){1,2}", v):
+        secs = 0.0
+        for part in v.split(":"):
+            secs = secs * 60 + int(part)
+        return secs
+    m = re.fullmatch(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?", v)
+    if m and any(m.groups()):
+        h, mi, s = (int(g or 0) for g in m.groups())
+        return float(h * 3600 + mi * 60 + s)
+    raise ValueError(f"Can't read the start time {value!r}. Use 1:02:03 or 1h2m3s.")
+
+
+def start_from_url(url: str) -> float | None:
+    """Twitch/YouTube links carry the moment as ?t=1h2m3s (Twitch) or ?t=3723 (YouTube)."""
+    m = re.search(r"[?&#]t=([0-9hms:.]+)", url)
+    return parse_time(m.group(1)) if m else None
+
+
+def download(url: str, out_dir: Path, video_id: str, cookies: Path | None = None,
+             section: tuple[float, float] | None = None) -> Path:
+    """Download a video. With section=(start, end) only that part of a long VOD is fetched."""
     import yt_dlp
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -114,6 +141,9 @@ def download(url: str, out_dir: Path, video_id: str, cookies: Path | None = None
     }
     if cookies:
         opts["cookiefile"] = str(cookies)
+    if section:
+        from yt_dlp.utils import download_range_func
+        opts["download_ranges"] = download_range_func(None, [section])
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url])
     path = out_dir / f"{video_id}.mp4"

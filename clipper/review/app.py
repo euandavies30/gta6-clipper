@@ -346,29 +346,46 @@ def upload(file: UploadFile = File(...), title: str = Form(""), credit: str = Fo
 
 
 @app.post("/add-url")
-def add_url(url: str = Form(...), title: str = Form(""), credit: str = Form(""), _=Depends(auth)):
-    """Clip a video from a link (YouTube, Twitch clip/VOD, or a direct .mp4) in the background."""
+def add_url(url: str = Form(...), title: str = Form(""), credit: str = Form(""),
+            start: str = Form(""), length: str = Form(""), _=Depends(auth)):
+    """Clip a video from a link (YouTube, Twitch clip/VOD, or a direct .mp4) in the background.
+
+    With a start time (or a ?t= in the link, e.g. a Twitch VOD timestamp) it becomes a single
+    "moment" clip of `length` seconds (default 65, so it clears TikTok's 1-minute rewards bar),
+    and only that part of the VOD is downloaded.
+    """
     url = url.strip()
     if not re.match(r"https?://", url):
         raise HTTPException(400, "Paste a full http(s) link")
     from ..sources import youtube as yt
+    try:
+        t0 = yt.parse_time(start)
+        if t0 is None:
+            t0 = yt.start_from_url(url)
+        secs = float(length) if length.strip() else 65.0
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    secs = max(10.0, min(secs, 180.0))
+    section = (t0, t0 + secs) if t0 is not None else None
 
     def _run():
         src_id = None
         try:
-            key = re.sub(r"[^A-Za-z0-9]+", "_", url)[-80:]
+            key = re.sub(r"[^A-Za-z0-9]+", "_", url)[-70:] + (f"_{int(section[0])}" if section else "")
             src_id = db.add_source("link", key, title=title.strip() or None, url=url, credit=credit.strip() or None)
             if not src_id:
                 return
-            if pipeline.is_direct_video(url):
+            if pipeline.is_direct_video(url) and not section:
                 path = url  # streamed by ffmpeg, never stored
             else:
-                path = str(yt.download(url, settings.raw_dir, f"link{src_id}", yt.cookie_file(settings.data_dir)))
+                path = str(yt.download(url, settings.raw_dir, f"link{src_id}", yt.cookie_file(settings.data_dir),
+                                       section=section))
             db.update_source(src_id, local_path=path, status="downloaded")
             src = db.get_source(src_id)
             if not src["title"]:
                 db.update_source(src_id, title=Path(path.split("?")[0]).stem)
-            pipeline.cut_source(settings, load_app_config(settings.accounts_file), db, db.get_source(src_id))
+            pipeline.cut_source(settings, load_app_config(settings.accounts_file), db, db.get_source(src_id),
+                                whole=bool(section))
             db.update_source(src_id, status="cut")
             pipeline.free_raw(settings, db.get_source(src_id))
         except Exception as e:

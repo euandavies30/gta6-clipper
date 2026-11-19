@@ -33,9 +33,11 @@
       <input name="url" placeholder="…or paste a link (YouTube, Twitch clip, .mp4)" required style="flex:2;min-width:220px;padding:8px;border-radius:8px;border:1px solid #2c303a;background:#0e0f13;color:var(--text)">
       <input name="title" placeholder="Title" style="flex:1;min-width:140px;padding:8px;border-radius:8px;border:1px solid #2c303a;background:#0e0f13;color:var(--text)">
       <input name="credit" placeholder="Credit" style="flex:1;min-width:120px;padding:8px;border-radius:8px;border:1px solid #2c303a;background:#0e0f13;color:var(--text)">
+      <input name="start" placeholder="Start (1:02:03)" title="Optional: cut one clip starting here (or put ?t= in the link)" style="flex:0 1 130px;padding:8px;border-radius:8px;border:1px solid #2c303a;background:#0e0f13;color:var(--text)">
+      <input name="length" placeholder="Secs (65)" inputmode="numeric" style="flex:0 1 90px;padding:8px;border-radius:8px;border:1px solid #2c303a;background:#0e0f13;color:var(--text)">
       <button class="approve" type="submit" style="flex:0 0 auto;padding:9px 18px">Clip link</button>
     </form>
-    <p class="meta">Clips appear in Pending a few minutes later. Refresh to check. <a href="/sources" style="color:var(--muted)">Source status</a></p>
+    <p class="meta">With a start time (or a Twitch VOD link with ?t=) you get one clip of that moment, 65s by default, with the title as the on-screen hook. Clips appear in Pending a few minutes later. Refresh to check. <a href="/sources" style="color:var(--muted)">Source status</a></p>
   </details>
   {% if not clips %}<p class="meta">No {{ status }} clips.</p>{% endif %}
   <div class="grid">
