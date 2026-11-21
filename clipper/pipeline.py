@@ -47,7 +47,9 @@ def download_new(settings: Settings, db: DB) -> None:
     cookies = youtube.cookie_file(settings.data_dir)
     # Failed YouTube downloads are retried each ingest (e.g. after cookies are added).
     retry = [s for s in db.sources_with_status("failed") if s["kind"] in ("youtube", "rockstar") and not s["local_path"]]
-    for src in list(db.sources_with_status("new")) + retry:
+    # Pasted links are handled by the request that added them (often just a window of a long stream).
+    fresh = [s for s in db.sources_with_status("new") if s["kind"] != "link"]
+    for src in fresh + retry:
         try:
             if is_direct_video(src["url"]):
                 # ffmpeg reads direct MP4 links over HTTP, so big 4K trailers never touch the disk.
