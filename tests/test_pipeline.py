@@ -310,3 +310,67 @@ def test_twitch_clip_link_becomes_vod_window(settings, monkeypatch, tmp_path):
     with review.db.conn() as c:
         src = c.execute("SELECT * FROM sources ORDER BY id DESC LIMIT 1").fetchone()
     assert src["title"] == "aligator" and src["credit"] == "Jynxzi"
+
+
+def test_vod_peaks_are_loud_spaced_and_skip_the_intro():
+    import numpy as np
+    from clipper.sources import twitch
+    loud = np.full(3600, 40.0)
+    loud[100:110] = 90   # intro: skipped
+    loud[1000:1010] = 85
+    loud[1050:1060] = 84  # too close to 1000
+    loud[2000:2010] = 80
+    starts = twitch.pick_peaks(loud, count=3, length=65)
+    assert len(starts) == 3
+    assert any(955 <= s <= 975 for s in starts) and any(1955 <= s <= 1975 for s in starts)
+    assert not any(55 <= s <= 75 for s in starts)
+    assert all(b - a >= 180 for a, b in zip(starts, starts[1:]))
+    assert twitch.is_vod("https://www.twitch.tv/videos/2932568279")
+    assert not twitch.is_vod("https://www.twitch.tv/jynxzi/clip/abc")
+
+
+def test_stream_loudness_reads_in_chunks(tmp_path):
+    import subprocess
+    from clipper.sources import twitch
+    wav = tmp_path / "a.wav"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=duration=5", str(wav)], check=True)
+    assert len(twitch.stream_loudness(str(wav))) == 5
+
+
+def test_pasted_links_are_not_downloaded_by_the_worker(db, settings):
+    from clipper import pipeline
+    sid = db.add_source("link", "vod", title="t", url="https://www.twitch.tv/videos/1")
+    with mock.patch("clipper.sources.youtube.download") as dl:
+        pipeline.download_new(settings, db)
+    dl.assert_not_called()
+
+
+def test_vod_link_without_start_cuts_the_loudest_moments(settings, monkeypatch, tmp_path):
+    import subprocess
+    from fastapi.testclient import TestClient
+    from clipper import pipeline
+    from clipper.review import app as review
+    from clipper.sources import twitch
+
+    vid = tmp_path / "m.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=30:duration=3",
+                    "-f", "lavfi", "-i", "sine=duration=3", "-shortest", str(vid)], check=True)
+    sections = []
+    monkeypatch.setattr("clipper.sources.youtube.download",
+                        lambda url, out_dir, vid_id, cookies=None, section=None: sections.append(section) or vid)
+    monkeypatch.setattr(twitch, "vod_info", lambda url: {"title": "GTA", "channel": "Jynxzi", "duration": 9000,
+                                                         "audio_url": "http://x/a.m3u8"})
+    monkeypatch.setattr(twitch, "stream_loudness", lambda u: [0.0] * 10)
+    monkeypatch.setattr(twitch, "pick_peaks", lambda loud, count, length: [400.0, 900.0])
+    monkeypatch.setattr(review.threading, "Thread",
+                        lambda target, args=(), **kw: type("T", (), {"start": staticmethod(lambda: target(*args))})())
+    monkeypatch.setattr(pipeline.captions, "transcribe", lambda *a, **k: [])
+    monkeypatch.setattr(pipeline, "free_raw", lambda *a, **k: None)
+    r = TestClient(review.app).post("/add-url", data={"url": "https://www.twitch.tv/videos/77"},
+                                    auth=("admin", review.settings.review_password or ""), follow_redirects=False)
+    assert r.status_code == 303
+    assert sections == [(400.0, 465.0), (900.0, 965.0)]
+    with review.db.conn() as c:
+        rows = c.execute("SELECT s.title, s.credit FROM clips c JOIN sources s ON s.id=c.source_id "
+                         "WHERE s.url LIKE 'https://www.twitch.tv/videos/77%'").fetchall()
+    assert len(rows) == 2 and rows[0]["title"] == "Jynxzi in GTA 6"

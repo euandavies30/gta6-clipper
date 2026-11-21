@@ -225,6 +225,7 @@ def act(clip_id: int, action: str, caption: str | None = Form(None), back: str =
         db.update_clip(clip_id, status="approved", **({"caption": caption} if caption is not None else {}))
     elif action == "reject":
         db.update_clip(clip_id, status="rejected")
+        _delete_rejected_files()
     elif action == "caption" and caption is not None:
         db.update_clip(clip_id, caption=caption)
     else:
@@ -306,6 +307,7 @@ def _start_worker():
     if os.getenv("RUN_WORKER", "true").lower() in {"1", "true", "yes"}:
         # A new deploy usually carries a fix, so give failed sources another go.
         log.info("startup: re-queued %s failed sources", _requeue_failed())
+        log.info("startup: deleted %s rejected clip files; %s", _delete_rejected_files(), _disk_line())
         threading.Thread(target=worker_loop, args=(_stop,), daemon=True, name="worker").start()
 
 
@@ -345,6 +347,72 @@ def upload(file: UploadFile = File(...), title: str = Form(""), credit: str = Fo
     return RedirectResponse("/?status=pending&uploaded=1", status_code=303)
 
 
+def _disk_hint(e: Exception) -> str:
+    msg = str(e)
+    if "No space left" in msg or "code 228" in msg or "exited 228" in msg:
+        return f"DISK FULL ({_disk_line()}). Reject old clips to free space, then retry. "
+    return ""
+
+
+def _disk_line() -> str:
+    try:
+        du = shutil.disk_usage(settings.data_dir)
+        clips = sum(p.stat().st_size for p in settings.clips_dir.glob("*.mp4"))
+        raw = sum(p.stat().st_size for p in settings.raw_dir.glob("*") if p.is_file())
+        return (f"{du.free / 1e6:.0f} MB free of {du.total / 1e6:.0f} MB; clips {clips / 1e6:.0f} MB, "
+                f"downloads {raw / 1e6:.0f} MB")
+    except OSError as e:
+        return f"disk usage unknown: {e}"
+
+
+def _delete_rejected_files() -> int:
+    """Rejected clips are never posted, so their video files only take up the small volume."""
+    n = 0
+    with db.conn() as c:
+        rows = c.execute("SELECT id, path FROM clips WHERE status='rejected'").fetchall()
+    for r in rows:
+        p = Path(r["path"] or "")
+        if p.is_file() and p.resolve().parent == settings.clips_dir.resolve():
+            p.unlink(missing_ok=True)
+            n += 1
+    return n
+
+
+def _vod_moments(url: str, secs: float, title: str, credit: str) -> None:
+    """Find the loudest reactions in a whole Twitch broadcast and cut each one as a moment clip."""
+    from ..sources import twitch, youtube as yt
+    try:
+        info = twitch.vod_info(url)
+        if not info["audio_url"]:
+            raise RuntimeError("Twitch gave no audio stream for this broadcast")
+        loud = twitch.stream_loudness(info["audio_url"])
+        starts = twitch.pick_peaks(loud, count=5, length=secs)
+    except Exception as e:
+        log.error("finding moments in %s failed: %s", url, str(e).splitlines()[0][:300])
+        sid = db.add_source("link", re.sub(r"[^A-Za-z0-9]+", "_", url)[-70:] + "_auto", title=title or url,
+                            url=url, credit=credit or None)
+        if sid:
+            db.update_source(sid, status="failed", error=(_disk_hint(e) + str(e))[:1000])
+        return
+    who = credit or info["channel"] or "Streamer"
+    hook = title or f"{who} in GTA 6"
+    app_cfg = load_app_config(settings.accounts_file)
+    for t0 in starts:
+        key = re.sub(r"[^A-Za-z0-9]+", "_", url)[-70:] + f"_{int(t0)}"
+        src_id = db.add_source("link", key, title=hook, url=f"{url}?t={int(t0)}s", credit=who)
+        if not src_id:
+            continue
+        try:
+            path = yt.download(url, settings.raw_dir, f"link{src_id}", None, section=(t0, t0 + secs))
+            db.update_source(src_id, local_path=str(path), status="downloaded")
+            pipeline.cut_source(settings, app_cfg, db, db.get_source(src_id), whole=True)
+            db.update_source(src_id, status="cut")
+            pipeline.free_raw(settings, db.get_source(src_id))
+        except Exception as e:
+            log.error("moment at %.0fs of %s failed: %s", t0, url, str(e).splitlines()[0][:300])
+            db.update_source(src_id, status="failed", error=(_disk_hint(e) + str(e))[:1000])
+
+
 @app.post("/add-url")
 def add_url(url: str = Form(...), title: str = Form(""), credit: str = Form(""),
             start: str = Form(""), length: str = Form(""), _=Depends(auth)):
@@ -369,6 +437,12 @@ def add_url(url: str = Form(...), title: str = Form(""), credit: str = Form(""),
     section = (t0, t0 + secs) if t0 is not None else None
     from ..sources import twitch
     expand_clip = section is None and twitch.is_clip(url)
+    if section is None and twitch.is_vod(url):
+        threading.Thread(target=_vod_moments, args=(url, secs, title.strip(), credit.strip()),
+                         daemon=True, name="vod-moments").start()
+        return RedirectResponse("/?status=pending&msg=" + urllib.parse.quote(
+            "Listening through that stream for the loudest reactions, then cutting the top 5. A long stream takes "
+            "10-20 minutes; refresh Pending to check."), status_code=303)
 
     def _run():
         nonlocal url, section
@@ -383,8 +457,10 @@ def add_url(url: str = Form(...), title: str = Form(""), credit: str = Form(""),
                 try:
                     m = twitch.find_moment(url, secs)
                 except Exception as e:
-                    log.warning("couldn't find the VOD for %s, using the clip itself: %s", url, e)
-                    m = None
+                    raise RuntimeError(
+                        "Twitch won't give our server this clip's details (GTA clips are age-gated on Twitch). "
+                        "Paste the streamer's past-broadcast link (twitch.tv/videos/...) instead, with a start "
+                        f"time for one moment or without one to auto-pick the top 5. ({str(e).splitlines()[0][:150]})")
                 if m:
                     url, section = m.vod_url, (m.start, m.start + secs)
                     db.update_source(src_id, url=url)
@@ -408,7 +484,7 @@ def add_url(url: str = Form(...), title: str = Form(""), credit: str = Form(""),
         except Exception as e:
             log.error("clip from link failed: %s: %s", url, str(e).splitlines()[0][:300])
             if src_id:
-                db.update_source(src_id, status="failed", error=str(e)[:1000])
+                db.update_source(src_id, status="failed", error=(_disk_hint(e) + str(e))[:1000])
 
     threading.Thread(target=_run, daemon=True, name="add-url").start()
     return RedirectResponse("/?status=pending&msg=" + urllib.parse.quote(
@@ -420,13 +496,15 @@ def sources(_=Depends(auth)):
     """Plain-text list of sources and their status (handy for debugging failed downloads)."""
     with db.conn() as c:
         rows = c.execute("SELECT id, kind, status, title, url, substr(error,-400) e FROM sources ORDER BY id DESC LIMIT 50").fetchall()
-    return "\n".join(f"#{r['id']} [{r['kind']}/{r['status']}] {r['title']} {r['url'] or ''} {r['e'] or ''}" for r in rows)
+    return f"disk: {_disk_line()}\n" + "\n".join(f"#{r['id']} [{r['kind']}/{r['status']}] {r['title']} {r['url'] or ''} {r['e'] or ''}" for r in rows)
 
 
 def _requeue_failed() -> int:
     with db.conn() as c:
         return c.execute("UPDATE sources SET status = CASE WHEN local_path IS NOT NULL AND local_path != '' "
-                         "THEN 'downloaded' ELSE 'new' END, error = NULL WHERE status = 'failed'").rowcount
+                         "THEN 'downloaded' ELSE 'new' END, error = NULL WHERE status = 'failed' AND kind != 'link'").rowcount
+    # Pasted links are one-shot (re-paste to retry): requeuing a stream link would make the worker
+    # download the whole multi-hour broadcast and fill the volume.
 
 
 @app.post("/sources/retry", response_class=PlainTextResponse)
