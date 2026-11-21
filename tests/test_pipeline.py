@@ -374,3 +374,24 @@ def test_vod_link_without_start_cuts_the_loudest_moments(settings, monkeypatch, 
         rows = c.execute("SELECT s.title, s.credit FROM clips c JOIN sources s ON s.id=c.source_id "
                          "WHERE s.url LIKE 'https://www.twitch.tv/videos/77%'").fetchall()
     assert len(rows) == 2 and rows[0]["title"] == "Jynxzi in GTA 6"
+
+
+def test_reject_deletes_the_file_and_stale_downloads_are_cleared(settings):
+    from fastapi.testclient import TestClient
+    from clipper.review import app as review
+    clip_file = review.settings.clips_dir / "rej.mp4"
+    clip_file.write_bytes(b"x")
+    sid = review.db.add_source("inbox", "rej-src", title="t", local_path="/x.mp4")
+    cid = review.db.add_clip(sid, 0, 20, 1, str(clip_file), "", "cap", "pending")
+    r = TestClient(review.app).post(f"/clips/{cid}/reject", data={"back": "pending"},
+                                    auth=("admin", review.settings.review_password or ""), follow_redirects=False)
+    assert r.status_code == 303 and not clip_file.exists()
+    assert review.db.get_clip(cid)["status"] == "rejected"
+
+    keep = review.settings.raw_dir / "keep.mp4"
+    stale = review.settings.raw_dir / "link99.mp4"
+    keep.write_bytes(b"k"); stale.write_bytes(b"s")
+    sid2 = review.db.add_source("link", "keep-src", title="t", url="u")
+    review.db.update_source(sid2, local_path=str(keep), status="downloaded")
+    assert review._delete_stale_downloads() >= 1
+    assert keep.exists() and not stale.exists()

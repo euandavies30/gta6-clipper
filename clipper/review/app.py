@@ -224,8 +224,9 @@ def act(clip_id: int, action: str, caption: str | None = Form(None), back: str =
     if action == "approve":
         db.update_clip(clip_id, status="approved", **({"caption": caption} if caption is not None else {}))
     elif action == "reject":
+        # Delete the video first: on a full disk SQLite can't write until some space is freed.
+        _delete_clip_file(db.get_clip(clip_id))
         db.update_clip(clip_id, status="rejected")
-        _delete_rejected_files()
     elif action == "caption" and caption is not None:
         db.update_clip(clip_id, caption=caption)
     else:
@@ -307,6 +308,7 @@ def _start_worker():
     if os.getenv("RUN_WORKER", "true").lower() in {"1", "true", "yes"}:
         # A new deploy usually carries a fix, so give failed sources another go.
         log.info("startup: re-queued %s failed sources", _requeue_failed())
+        log.info("startup: deleted %s stale downloads", _delete_stale_downloads())
         log.info("startup: deleted %s rejected clip files; %s", _delete_rejected_files(), _disk_line())
         threading.Thread(target=worker_loop, args=(_stop,), daemon=True, name="worker").start()
 
@@ -365,6 +367,25 @@ def _disk_line() -> str:
         return f"disk usage unknown: {e}"
 
 
+def _delete_clip_file(clip) -> None:
+    p = Path((clip["path"] if clip else "") or "")
+    if p.is_file() and p.resolve().parent == settings.clips_dir.resolve():
+        p.unlink(missing_ok=True)
+
+
+def _delete_stale_downloads() -> int:
+    """Raw downloads are only needed while a source is waiting to be cut; failed runs leave theirs behind."""
+    with db.conn() as c:
+        keep = {Path(r["local_path"]).name for r in c.execute(
+            "SELECT local_path FROM sources WHERE status='downloaded' AND local_path IS NOT NULL").fetchall()}
+    n = 0
+    for p in settings.raw_dir.glob("*"):
+        if p.is_file() and p.name not in keep:
+            p.unlink(missing_ok=True)
+            n += 1
+    return n
+
+
 def _delete_rejected_files() -> int:
     """Rejected clips are never posted, so their video files only take up the small volume."""
     n = 0
@@ -410,6 +431,8 @@ def _vod_moments(url: str, secs: float, title: str, credit: str) -> None:
             pipeline.free_raw(settings, db.get_source(src_id))
         except Exception as e:
             log.error("moment at %.0fs of %s failed: %s", t0, url, str(e).splitlines()[0][:300])
+            for p in settings.raw_dir.glob(f"link{src_id}.*"):
+                p.unlink(missing_ok=True)
             db.update_source(src_id, status="failed", error=(_disk_hint(e) + str(e))[:1000])
 
 
@@ -483,6 +506,9 @@ def add_url(url: str = Form(...), title: str = Form(""), credit: str = Form(""),
             pipeline.free_raw(settings, db.get_source(src_id))
         except Exception as e:
             log.error("clip from link failed: %s: %s", url, str(e).splitlines()[0][:300])
+            if src_id:
+                for p in settings.raw_dir.glob(f"link{src_id}.*"):
+                    p.unlink(missing_ok=True)
             if src_id:
                 db.update_source(src_id, status="failed", error=(_disk_hint(e) + str(e))[:1000])
 
